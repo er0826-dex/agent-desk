@@ -20,58 +20,82 @@ import (
 // ("tomorrow", "mon", "10/12"). 9am, the same "morning" the suggestions use.
 const DefaultWakeHour = 9
 
-// SnoozePreset is one suggestion row of the s-key picker: a label, the spec
-// ParseSnooze reads, and the time it resolves to for the moment it was built.
+// SnoozePreset is one suggestion row of the s-key picker: a label and the
+// time it resolves to for the moment it was built.
 type SnoozePreset struct {
 	Label string
-	Spec  string
 	At    time.Time
 }
-
-// snoozeCandidates are the suggestion pool, in the order they are offered.
-// Specs are anchored ("today 9am", not "9am") so a candidate that has passed
-// drops out instead of silently rolling to tomorrow.
-var snoozeCandidates = []SnoozePreset{
-	{Label: "This morning", Spec: "today 9am"},
-	{Label: "Lunchtime", Spec: "today 12pm"},
-	{Label: "This afternoon", Spec: "today 2pm"},
-	{Label: "End of day", Spec: "today 5pm"},
-	{Label: "Tonight", Spec: "today 8pm"},
-	{Label: "Tomorrow morning", Spec: "tomorrow 9am"},
-	{Label: "Tomorrow afternoon", Spec: "tomorrow 2pm"},
-	{Label: "Tomorrow evening", Spec: "tomorrow 7pm"},
-	{Label: "Monday morning", Spec: "mon 9am"},
-	{Label: "Saturday morning", Spec: "sat 9am"},
-	{Label: "Next week", Spec: "7d"},
-}
-
-// snoozeSuggestionCount is how many suggestions the picker shows.
-const snoozeSuggestionCount = 6
 
 // snoozeMinLead keeps a suggestion from being almost now.
 const snoozeMinLead = 30 * time.Minute
 
-// SnoozeSuggestions returns the picker rows for now: the first candidates
-// that are still ahead by at least snoozeMinLead, with duplicate times
-// removed (Sunday's "Monday morning" is tomorrow morning).
+// SnoozeSuggestions returns the picker rows for now. They are landmarks in
+// the week rather than durations, because that is how Eric snoozes (10/12:
+// "push something off to the weekend, till next Monday, till later in the
+// week"); durations and odd times are typed.
+//
+//	Tonight           today 8pm, until 7:30pm
+//	Later this week   Thu 9am on Mon/Tue, Fri 9am on Wed/Thu, absent Fri–Sun
+//	This weekend      Sat 9am Mon–Fri (and early Sat), Sun 9am on Sat, absent Sun
+//	Next Monday       the Monday after today, 9am
+//	In 2 weeks        today + 14 days, 9am
+//	In a month        today + 1 month, 9am
 func SnoozeSuggestions(now time.Time) []SnoozePreset {
-	out := make([]SnoozePreset, 0, snoozeSuggestionCount)
-	seen := map[int64]bool{}
-	for _, c := range snoozeCandidates {
-		t, err := ParseSnooze(c.Spec, now)
-		if err != nil || t.Sub(now) < snoozeMinLead {
-			continue
-		}
-		if seen[t.Unix()] {
-			continue
-		}
-		seen[t.Unix()] = true
-		out = append(out, SnoozePreset{Label: c.Label, Spec: c.Spec, At: t})
-		if len(out) == snoozeSuggestionCount {
-			break
-		}
+	loc := now.Location()
+	y, m, d := now.Date()
+	at := func(dayOffset, hour int) time.Time {
+		return time.Date(y, m, d+dayOffset, hour, 0, 0, 0, loc)
 	}
-	return out
+	wd := now.Weekday()
+	daysUntil := func(target time.Weekday) int { // strictly after today
+		delta := (int(target) - int(wd) + 7) % 7
+		if delta == 0 {
+			delta = 7
+		}
+		return delta
+	}
+
+	var rows []SnoozePreset
+	add := func(label string, t time.Time) {
+		if t.Sub(now) < snoozeMinLead {
+			return
+		}
+		for _, r := range rows {
+			if r.At.Equal(t) {
+				return
+			}
+		}
+		rows = append(rows, SnoozePreset{Label: label, At: t})
+	}
+
+	add("Tonight", at(0, 20))
+
+	switch wd {
+	case time.Monday, time.Tuesday:
+		add("Later this week", at(daysUntil(time.Thursday), DefaultWakeHour))
+	case time.Wednesday, time.Thursday:
+		add("Later this week", at(daysUntil(time.Friday), DefaultWakeHour))
+	}
+
+	switch wd {
+	case time.Saturday:
+		if sat := at(0, DefaultWakeHour); sat.Sub(now) >= snoozeMinLead {
+			add("This weekend", sat)
+		} else {
+			add("This weekend", at(1, DefaultWakeHour))
+		}
+	case time.Sunday:
+		// no weekend row
+	default:
+		add("This weekend", at(daysUntil(time.Saturday), DefaultWakeHour))
+	}
+
+	add("Next Monday", at(daysUntil(time.Monday), DefaultWakeHour))
+	add("In 2 weeks", at(14, DefaultWakeHour))
+	month := now.AddDate(0, 1, 0)
+	add("In a month", time.Date(month.Year(), month.Month(), month.Day(), DefaultWakeHour, 0, 0, 0, loc))
+	return rows
 }
 
 // Snooze parks the session until the given time. Setting a marker mutes the

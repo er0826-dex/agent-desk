@@ -11,10 +11,12 @@ import (
 	"github.com/millwright-software/agent-desk/internal/session"
 )
 
-// snoozeSetMsg is sent when the user picks a wake time.
+// snoozeSetMsg is sent when the user picks a wake time. pick is the
+// suggestion label, or "typed" for a hand-entered time, for the tally.
 type snoozeSetMsg struct {
 	instanceID string
 	until      time.Time
+	pick       string
 }
 
 // SnoozeDialog is the s-key picker. The text field comes first and has focus,
@@ -38,7 +40,7 @@ type SnoozeDialog struct {
 // NewSnoozeDialog creates the dialog.
 func NewSnoozeDialog() *SnoozeDialog {
 	ti := textinput.New()
-	ti.Placeholder = "2h · 7am · mon 9am · 10/12 11:00"
+	ti.Placeholder = "2h · 7am · tomorrow · fri 9am · 10/12 11:00"
 	ti.CharLimit = 32
 	ti.Width = 30
 	ti.Prompt = ""
@@ -93,17 +95,18 @@ func (d *SnoozeDialog) filtered() []session.SnoozePreset {
 
 // resolve returns what Enter would pick right now: the highlighted row; else
 // the first suggestion still matching the typed text (what is on screen
-// wins: "tom" or "tomorrow" means the Tomorrow morning row, not a bare
-// parse of the word); else the typed text as a time.
-func (d *SnoozeDialog) resolve(now time.Time) (time.Time, error) {
+// wins: "week" means the Later this week row, not a parse of the word);
+// else the typed text as a time. The second return is the tally label.
+func (d *SnoozeDialog) resolve(now time.Time) (time.Time, string, error) {
 	rows := d.filtered()
 	if d.cursor >= 0 && d.cursor < len(rows) {
-		return session.ParseSnooze(rows[d.cursor].Spec, now)
+		return rows[d.cursor].At, rows[d.cursor].Label, nil
 	}
 	if len(rows) > 0 {
-		return session.ParseSnooze(rows[0].Spec, now)
+		return rows[0].At, rows[0].Label, nil
 	}
-	return session.ParseSnooze(d.input.Value(), now)
+	t, err := session.ParseSnooze(d.input.Value(), now)
+	return t, "typed", err
 }
 
 // Update handles key input. Returns a snoozeSetMsg command on Enter.
@@ -129,7 +132,10 @@ func (d *SnoozeDialog) Update(msg tea.KeyMsg) (*SnoozeDialog, tea.Cmd) {
 		}
 		return d, nil
 	case "enter":
-		until, err := d.resolve(time.Now())
+		// Rebuild the rows for this instant so a dialog left open does not
+		// hand back a landmark that has since passed.
+		d.suggestions = session.SnoozeSuggestions(time.Now())
+		until, pick, err := d.resolve(time.Now())
 		if err != nil {
 			d.err = err.Error()
 			return d, nil
@@ -137,7 +143,7 @@ func (d *SnoozeDialog) Update(msg tea.KeyMsg) (*SnoozeDialog, tea.Cmd) {
 		instanceID := d.instanceID
 		d.Hide()
 		return d, func() tea.Msg {
-			return snoozeSetMsg{instanceID: instanceID, until: until}
+			return snoozeSetMsg{instanceID: instanceID, until: until, pick: pick}
 		}
 	}
 	// Anything else types into the field, pulling focus back from the list.
@@ -210,7 +216,7 @@ func (d *SnoozeDialog) View() string {
 	case d.cursor < 0 && val == "":
 		content.WriteString("  " + dimStyle.Render("type a time, or ↓ to pick one"))
 	case d.cursor < 0:
-		if t, err := d.resolve(now); err == nil {
+		if t, _, err := d.resolve(now); err == nil {
 			content.WriteString("  " + previewStyle.Render("→ "+previewTime(t, now)))
 		} else {
 			content.WriteString("  " + dimStyle.Render("?"))

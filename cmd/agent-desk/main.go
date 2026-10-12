@@ -205,6 +205,9 @@ func main() {
 		case "status":
 			handleStatus(profile, args[1:])
 			return
+		case "snooze":
+			handleSnooze(profile, args[1:])
+			return
 		case "profile":
 			handleProfile(args[1:])
 			return

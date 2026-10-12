@@ -56,51 +56,76 @@ func TestParseSnoozeRejects(t *testing.T) {
 }
 
 func TestSnoozeSuggestions(t *testing.T) {
-	// Saturday 16:30: the morning/lunch/afternoon rows have passed, "end of
-	// day" (5pm) is 30 min out and allowed, so the list starts there.
-	got := SnoozeSuggestions(snoozeNow)
-	if len(got) != snoozeSuggestionCount {
-		t.Fatalf("want %d suggestions, got %d: %v", snoozeSuggestionCount, len(got), labels(got))
+	day := func(y, mo, d, h, mi int) time.Time { return time.Date(y, time.Month(mo), d, h, mi, 0, 0, time.Local) }
+	type row struct {
+		label string
+		at    time.Time
 	}
-	want := []string{"End of day", "Tonight", "Tomorrow morning", "Tomorrow afternoon", "Tomorrow evening", "Monday morning"}
-	for i, w := range want {
-		if got[i].Label != w {
-			t.Errorf("row %d = %q, want %q (all: %v)", i, got[i].Label, w, labels(got))
+	cases := []struct {
+		name string
+		now  time.Time
+		want []row
+	}{
+		{"Monday 1am", day(2026, 10, 12, 1, 10), []row{
+			{"Tonight", day(2026, 10, 12, 20, 0)},
+			{"Later this week", day(2026, 10, 15, 9, 0)},
+			{"This weekend", day(2026, 10, 17, 9, 0)},
+			{"Next Monday", day(2026, 10, 19, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 26, 9, 0)},
+			{"In a month", day(2026, 11, 12, 9, 0)},
+		}},
+		{"Wednesday 2pm", day(2026, 10, 14, 14, 0), []row{
+			{"Tonight", day(2026, 10, 14, 20, 0)},
+			{"Later this week", day(2026, 10, 16, 9, 0)},
+			{"This weekend", day(2026, 10, 17, 9, 0)},
+			{"Next Monday", day(2026, 10, 19, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 28, 9, 0)},
+			{"In a month", day(2026, 11, 14, 9, 0)},
+		}},
+		{"Friday 1pm: no later-this-week", day(2026, 10, 16, 13, 0), []row{
+			{"Tonight", day(2026, 10, 16, 20, 0)},
+			{"This weekend", day(2026, 10, 17, 9, 0)},
+			{"Next Monday", day(2026, 10, 19, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 30, 9, 0)},
+			{"In a month", day(2026, 11, 16, 9, 0)},
+		}},
+		{"Saturday 4:30pm: weekend means Sunday", snoozeNow, []row{
+			{"Tonight", day(2026, 10, 3, 20, 0)},
+			{"This weekend", day(2026, 10, 4, 9, 0)},
+			{"Next Monday", day(2026, 10, 5, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 17, 9, 0)},
+			{"In a month", day(2026, 11, 3, 9, 0)},
+		}},
+		{"Saturday 7am: weekend is still today", day(2026, 10, 3, 7, 0), []row{
+			{"Tonight", day(2026, 10, 3, 20, 0)},
+			{"This weekend", day(2026, 10, 3, 9, 0)},
+			{"Next Monday", day(2026, 10, 5, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 17, 9, 0)},
+			{"In a month", day(2026, 11, 3, 9, 0)},
+		}},
+		{"Sunday 8:30pm: tonight gone, no weekend", day(2026, 10, 11, 20, 30), []row{
+			{"Next Monday", day(2026, 10, 12, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 25, 9, 0)},
+			{"In a month", day(2026, 11, 11, 9, 0)},
+		}},
+		{"Monday 7:45pm: tonight under the lead", day(2026, 10, 12, 19, 45), []row{
+			{"Later this week", day(2026, 10, 15, 9, 0)},
+			{"This weekend", day(2026, 10, 17, 9, 0)},
+			{"Next Monday", day(2026, 10, 19, 9, 0)},
+			{"In 2 weeks", day(2026, 10, 26, 9, 0)},
+			{"In a month", day(2026, 11, 12, 9, 0)},
+		}},
+	}
+	for _, c := range cases {
+		got := SnoozeSuggestions(c.now)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: want %d rows, got %v", c.name, len(c.want), labels(got))
+			continue
 		}
-	}
-	for _, p := range got {
-		if !p.At.After(snoozeNow.Add(snoozeMinLead - time.Second)) {
-			t.Errorf("%q resolves too soon: %v", p.Label, p.At)
-		}
-	}
-
-	// 16:45: end of day is now under the lead, so it drops.
-	got = SnoozeSuggestions(snoozeNow.Add(15 * time.Minute))
-	if got[0].Label != "Tonight" {
-		t.Errorf("at 16:45 first row = %q, want Tonight", got[0].Label)
-	}
-
-	// 1am Monday: today's rows lead; nothing is duplicated.
-	mon := time.Date(2026, 10, 12, 1, 0, 0, 0, time.Local)
-	got = SnoozeSuggestions(mon)
-	if got[0].Label != "This morning" || got[1].Label != "Lunchtime" {
-		t.Errorf("1am Monday rows: %v", labels(got))
-	}
-
-	// Sunday evening: "Monday morning" is the same instant as "Tomorrow
-	// morning" and must appear once.
-	sun := time.Date(2026, 10, 11, 20, 30, 0, 0, time.Local)
-	got = SnoozeSuggestions(sun)
-	seen := map[int64]int{}
-	for _, p := range got {
-		seen[p.At.Unix()]++
-		if p.Label == "Monday morning" {
-			t.Errorf("Sunday evening should fold Monday morning into tomorrow morning: %v", labels(got))
-		}
-	}
-	for at, n := range seen {
-		if n > 1 {
-			t.Errorf("duplicate suggestion time %v", time.Unix(at, 0))
+		for i, w := range c.want {
+			if got[i].Label != w.label || !got[i].At.Equal(w.at) {
+				t.Errorf("%s row %d = %q %v, want %q %v", c.name, i, got[i].Label, got[i].At, w.label, w.at)
+			}
 		}
 	}
 }

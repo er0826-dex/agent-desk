@@ -2637,6 +2637,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.instancesMu.RUnlock()
 		if inst != nil {
 			h.snoozeSession(inst, msg.until)
+			if h.storage != nil {
+				if db := h.storage.GetDB(); db != nil {
+					_ = db.BumpSnoozeTally(msg.pick)
+				}
+			}
 		}
 		return h, nil
 

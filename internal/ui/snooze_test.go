@@ -170,16 +170,20 @@ func TestSnoozeDialogPicks(t *testing.T) {
 		t.Errorf("2h landed %v out", dl)
 	}
 
-	// A label fragment picks the first matching suggestion.
+	if msg.pick != "typed" {
+		t.Errorf("typed pick label = %q, want typed", msg.pick)
+	}
+
+	// A label fragment picks the first matching suggestion and reports it.
 	d.Show("sid", "notes")
-	d = typeKeys(d, "tomorrow")
+	d = typeKeys(d, "week")
 	rows := d.filtered()
 	if len(rows) == 0 {
-		t.Skip("no tomorrow rows at this hour")
+		t.Fatal("expected rows matching 'week' (Later this week / This weekend / In 2 weeks)")
 	}
 	d, msg = pick(t, d)
-	if !msg.until.Equal(rows[0].At) {
-		t.Errorf("fragment should pick %q (%v), got %v", rows[0].Label, rows[0].At, msg.until)
+	if !msg.until.Equal(rows[0].At) || msg.pick != rows[0].Label {
+		t.Errorf("fragment should pick %q (%v), got %q %v", rows[0].Label, rows[0].At, msg.pick, msg.until)
 	}
 
 	// Empty field + Enter takes the first suggestion.

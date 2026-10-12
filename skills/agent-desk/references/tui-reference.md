@@ -100,11 +100,12 @@ and 📅 when later, with the wake time after the name (`7p`, `Mon 7a`,
 `10/12 9a`). The picker opens on a text field: type a time (`30m`, `2h`,
 `7am`, `7:30pm`, `tomorrow 9am`, `mon`, `fri 9am`, `10/12`, `10/12 11:00`;
 day-only entries wake at 9am) and the resolved time shows underneath. Below
-it, six suggestions built for the time of day (this morning, lunchtime, this
-afternoon, end of day, tonight, tomorrow morning/afternoon/evening, Monday
-morning, Saturday morning, next week, whichever are still ahead), narrowing
-as you type; `↓` picks one. Enter takes the first matching suggestion while
-any match, else the typed time.
+it, the week's landmarks: Tonight (8pm), Later this week (Thu on Mon/Tue,
+Fri on Wed/Thu), This weekend (Sat 9am; Sun on a Saturday), Next Monday,
+In 2 weeks, In a month, whichever are still ahead. Typing narrows them;
+`↓` picks one. Enter takes the first matching suggestion while any match,
+else the typed time. Every pick is counted by row (typed times as "typed");
+`agent-desk snooze` prints the tally, the evidence for reshaping the list.
 
 While snoozed the session is skipped by `Shift+Left`/`Shift+Right` like red
 parking. `u` or attaching cancels the snooze and sends it home. The Snoozed

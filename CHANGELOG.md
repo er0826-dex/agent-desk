@@ -12,13 +12,14 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 ## [Unreleased]
 
 ### Changed
-- **Snooze picker: type first.** The text field comes first with focus, so typing starts immediately and
-  the resolved time shows underneath as you type. The fixed presets (1h, 3h, …) are replaced by six
-  suggestions built for the time of day (this morning, lunchtime, this afternoon, end of day, tonight,
-  tomorrow morning/afternoon/evening, Monday morning, Saturday morning, next week, whichever are still at
-  least 30 min ahead, duplicates folded), narrowing as you type; `↓` walks them. Enter takes the first
-  matching suggestion while any match, else the typed time. Day-only entries (`tomorrow`, `mon`, `10/12`)
-  now wake at 9am, the same "morning" the suggestions use (was 7am).
+- **Snooze picker: type first, landmarks below.** The text field comes first with focus, so typing starts
+  immediately and the resolved time shows underneath as you type. The fixed presets (1h, 3h, …) are
+  replaced by the week's landmarks: Tonight (8pm), Later this week (Thu on Mon/Tue, Fri on Wed/Thu), This
+  weekend (Sat 9am; Sun on a Saturday), Next Monday, In 2 weeks, In a month, whichever are still at least
+  30 min ahead. Typing narrows them; `↓` walks them. Enter takes the first matching suggestion while any
+  match, else the typed time. Day-only entries (`tomorrow`, `mon`, `10/12`) now wake at 9am (was 7am).
+- **`agent-desk snooze` prints the pick tally.** Every snooze counts its row (typed times as "typed") in the
+  state database, so the ladder can be reshaped from what actually gets used.
 
 ## [1.0.21] - 2026-10-03
 
