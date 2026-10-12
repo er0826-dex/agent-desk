@@ -17,19 +17,22 @@ type snoozeSetMsg struct {
 	until      time.Time
 }
 
-// SnoozeDialog is the s-key picker: the preset rows from
-// session.SnoozePresets plus a free-text row that takes anything
-// session.ParseSnooze reads ("2h", "7am", "mon 9am", "10/12 11:00").
+// SnoozeDialog is the s-key picker. The text field comes first and has focus,
+// so typing starts immediately ("2h", "7am", "mon 9am", "10/12 11:00") and
+// the resolved time shows underneath as you type. Below it, a short list of
+// suggestions built for the time of day (session.SnoozeSuggestions), which
+// narrows to whatever matches the typed text; ↓ moves onto the list. Enter
+// takes the first matching suggestion while any match, else the typed time.
 type SnoozeDialog struct {
-	visible    bool
-	width      int
-	height     int
-	cursor     int // 0..len(presets)-1 = preset row; len(presets) = custom row
-	instanceID string
-	title      string
-	input      textinput.Model
-	err        string
-	now        time.Time
+	visible     bool
+	width       int
+	height      int
+	instanceID  string
+	title       string
+	input       textinput.Model
+	cursor      int // -1 = the text field; 0.. = a row of filtered()
+	suggestions []session.SnoozePreset
+	err         string
 }
 
 // NewSnoozeDialog creates the dialog.
@@ -38,19 +41,19 @@ func NewSnoozeDialog() *SnoozeDialog {
 	ti.Placeholder = "2h · 7am · mon 9am · 10/12 11:00"
 	ti.CharLimit = 32
 	ti.Width = 30
-	return &SnoozeDialog{input: ti}
+	ti.Prompt = ""
+	return &SnoozeDialog{input: ti, cursor: -1}
 }
 
-// Show opens the dialog for a session.
+// Show opens the dialog for a session with the text field focused.
 func (d *SnoozeDialog) Show(instanceID, title string) {
 	d.visible = true
 	d.instanceID = instanceID
 	d.title = title
-	d.cursor = 0
 	d.err = ""
-	d.now = time.Now()
+	d.suggestions = session.SnoozeSuggestions(time.Now())
 	d.input.SetValue("")
-	d.input.Blur()
+	d.focusInput()
 }
 
 // Hide closes the dialog.
@@ -68,16 +71,39 @@ func (d *SnoozeDialog) SetSize(width, height int) {
 	d.height = height
 }
 
-func (d *SnoozeDialog) customRow() int { return len(session.SnoozePresets) }
+func (d *SnoozeDialog) focusInput() {
+	d.cursor = -1
+	d.input.Focus()
+}
 
-func (d *SnoozeDialog) setCursor(c int) {
-	d.cursor = c
-	d.err = ""
-	if c == d.customRow() {
-		d.input.Focus()
-	} else {
-		d.input.Blur()
+// filtered returns the suggestions matching the typed text (all when empty).
+func (d *SnoozeDialog) filtered() []session.SnoozePreset {
+	q := strings.ToLower(strings.TrimSpace(d.input.Value()))
+	if q == "" {
+		return d.suggestions
 	}
+	var out []session.SnoozePreset
+	for _, p := range d.suggestions {
+		if strings.Contains(strings.ToLower(p.Label), q) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// resolve returns what Enter would pick right now: the highlighted row; else
+// the first suggestion still matching the typed text (what is on screen
+// wins: "tom" or "tomorrow" means the Tomorrow morning row, not a bare
+// parse of the word); else the typed text as a time.
+func (d *SnoozeDialog) resolve(now time.Time) (time.Time, error) {
+	rows := d.filtered()
+	if d.cursor >= 0 && d.cursor < len(rows) {
+		return session.ParseSnooze(rows[d.cursor].Spec, now)
+	}
+	if len(rows) > 0 {
+		return session.ParseSnooze(rows[0].Spec, now)
+	}
+	return session.ParseSnooze(d.input.Value(), now)
 }
 
 // Update handles key input. Returns a snoozeSetMsg command on Enter.
@@ -85,47 +111,27 @@ func (d *SnoozeDialog) Update(msg tea.KeyMsg) (*SnoozeDialog, tea.Cmd) {
 	if !d.visible {
 		return d, nil
 	}
-	onCustom := d.cursor == d.customRow()
 	switch msg.String() {
 	case "esc":
 		d.Hide()
 		return d, nil
-	case "up", "ctrl+p":
-		if d.cursor > 0 {
-			d.setCursor(d.cursor - 1)
-		}
-		return d, nil
 	case "down", "ctrl+n", "tab":
-		if d.cursor < d.customRow() {
-			d.setCursor(d.cursor + 1)
+		if d.cursor < len(d.filtered())-1 {
+			d.cursor++
+			d.input.Blur()
 		}
 		return d, nil
-	case "k":
-		if !onCustom {
-			if d.cursor > 0 {
-				d.setCursor(d.cursor - 1)
-			}
-			return d, nil
-		}
-	case "j":
-		if !onCustom {
-			d.setCursor(d.cursor + 1)
-			return d, nil
-		}
-	case "enter":
-		spec := ""
-		if onCustom {
-			spec = d.input.Value()
+	case "up", "ctrl+p", "shift+tab":
+		if d.cursor > 0 {
+			d.cursor--
 		} else {
-			spec = session.SnoozePresets[d.cursor].Spec
+			d.focusInput()
 		}
-		until, err := session.ParseSnooze(spec, time.Now())
+		return d, nil
+	case "enter":
+		until, err := d.resolve(time.Now())
 		if err != nil {
 			d.err = err.Error()
-			if !onCustom {
-				d.setCursor(d.customRow())
-				d.input.SetValue(spec)
-			}
 			return d, nil
 		}
 		instanceID := d.instanceID
@@ -134,23 +140,28 @@ func (d *SnoozeDialog) Update(msg tea.KeyMsg) (*SnoozeDialog, tea.Cmd) {
 			return snoozeSetMsg{instanceID: instanceID, until: until}
 		}
 	}
-	if onCustom {
-		var cmd tea.Cmd
-		d.input, cmd = d.input.Update(msg)
-		d.err = ""
-		return d, cmd
+	// Anything else types into the field, pulling focus back from the list.
+	if d.cursor >= 0 {
+		d.focusInput()
 	}
-	// Any other printable key on a preset row starts a custom entry.
-	if len(msg.Runes) == 1 && msg.Type == tea.KeyRunes {
-		d.setCursor(d.customRow())
-		var cmd tea.Cmd
-		d.input, cmd = d.input.Update(msg)
-		return d, cmd
+	var cmd tea.Cmd
+	d.input, cmd = d.input.Update(msg)
+	d.err = ""
+	if d.cursor >= len(d.filtered()) {
+		d.cursor = -1
 	}
-	return d, nil
+	return d, cmd
 }
 
-// View renders the picker with each preset's resolved wake time.
+// previewTime renders a resolved wake time for the dialog.
+func previewTime(t, now time.Time) string {
+	if t.Sub(now) < 6*24*time.Hour {
+		return t.Format("Mon 3:04pm")
+	}
+	return t.Format("Mon 1/2 3:04pm")
+}
+
+// View renders the field, the live preview, and the suggestions.
 func (d *SnoozeDialog) View() string {
 	if !d.visible {
 		return ""
@@ -160,19 +171,21 @@ func (d *SnoozeDialog) View() string {
 	dimStyle := lipgloss.NewStyle().Foreground(ColorComment)
 	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent)
 	timeStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+	previewStyle := lipgloss.NewStyle().Foreground(ColorGreen)
 	errStyle := lipgloss.NewStyle().Foreground(ColorRed)
 
-	dialogWidth := 48
+	dialogWidth := 50
 	if d.width > 0 && d.width < dialogWidth+10 {
 		dialogWidth = d.width - 10
-		if dialogWidth < 34 {
-			dialogWidth = 34
+		if dialogWidth < 36 {
+			dialogWidth = 36
 		}
 	}
 
+	now := time.Now()
 	var content strings.Builder
 	content.WriteString(titleStyle.Render("Snooze session"))
-	content.WriteString(dimStyle.Render("          [Esc] Cancel"))
+	content.WriteString(dimStyle.Render("            [Esc] Cancel"))
 	content.WriteString("\n")
 	content.WriteString(strings.Repeat("-", dialogWidth-4))
 	content.WriteString("\n")
@@ -183,40 +196,48 @@ func (d *SnoozeDialog) View() string {
 	content.WriteString(dimStyle.Render(name))
 	content.WriteString("\n\n")
 
-	now := time.Now()
-	for i, p := range session.SnoozePresets {
-		prefix := "  "
-		label := p.Label
-		when := ""
-		if t, err := session.ParseSnooze(p.Spec, now); err == nil {
-			when = t.Format("Mon 3:04pm")
-		}
-		line := prefix
-		if i == d.cursor {
-			line = "> " + selectedStyle.Render(label)
+	// The field, with what Enter would do underneath.
+	if d.cursor < 0 {
+		content.WriteString("> " + selectedStyle.Render("When:") + " " + d.input.View())
+	} else {
+		content.WriteString("  When: " + d.input.View())
+	}
+	content.WriteString("\n")
+	val := strings.TrimSpace(d.input.Value())
+	switch {
+	case d.err != "":
+		content.WriteString("  " + errStyle.Render(d.err))
+	case d.cursor < 0 && val == "":
+		content.WriteString("  " + dimStyle.Render("type a time, or ↓ to pick one"))
+	case d.cursor < 0:
+		if t, err := d.resolve(now); err == nil {
+			content.WriteString("  " + previewStyle.Render("→ "+previewTime(t, now)))
 		} else {
-			line += label
+			content.WriteString("  " + dimStyle.Render("?"))
 		}
-		pad := 20 - len(label)
+	default:
+		content.WriteString("  " + dimStyle.Render("↑ to edit"))
+	}
+	content.WriteString("\n\n")
+
+	rows := d.filtered()
+	for i, p := range rows {
+		label := p.Label
+		pad := 22 - len(label)
 		if pad < 1 {
 			pad = 1
 		}
-		line += strings.Repeat(" ", pad) + timeStyle.Render(when)
+		line := "  " + label
+		if i == d.cursor {
+			line = "> " + selectedStyle.Render(label)
+		}
+		line += strings.Repeat(" ", pad) + timeStyle.Render(previewTime(p.At, now))
 		content.WriteString(line)
 		content.WriteString("\n")
 	}
-
-	// Custom row
-	if d.cursor == d.customRow() {
-		content.WriteString("> " + selectedStyle.Render("At:") + " " + d.input.View())
-	} else {
-		content.WriteString("  At: " + dimStyle.Render("type a time"))
-	}
-	content.WriteString("\n")
-
-	if d.err != "" {
+	if len(rows) == 0 && val != "" {
+		content.WriteString(dimStyle.Render("  (no suggestions match; Enter uses the typed time)"))
 		content.WriteString("\n")
-		content.WriteString(errStyle.Render(d.err))
 	}
 
 	content.WriteString("\n")

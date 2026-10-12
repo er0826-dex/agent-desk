@@ -11,6 +11,15 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 
 ## [Unreleased]
 
+### Changed
+- **Snooze picker: type first.** The text field comes first with focus, so typing starts immediately and
+  the resolved time shows underneath as you type. The fixed presets (1h, 3h, …) are replaced by six
+  suggestions built for the time of day (this morning, lunchtime, this afternoon, end of day, tonight,
+  tomorrow morning/afternoon/evening, Monday morning, Saturday morning, next week, whichever are still at
+  least 30 min ahead, duplicates folded), narrowing as you type; `↓` walks them. Enter takes the first
+  matching suggestion while any match, else the typed time. Day-only entries (`tomorrow`, `mon`, `10/12`)
+  now wake at 9am, the same "morning" the suggestions use (was 7am).
+
 ## [1.0.21] - 2026-10-03
 
 ### Added

@@ -17,24 +17,61 @@ import (
 // u key and attaching (both cancel).
 
 // DefaultWakeHour is the hour used when a snooze names a day but no time
-// ("tomorrow", "mon", "10/12").
-const DefaultWakeHour = 7
+// ("tomorrow", "mon", "10/12"). 9am, the same "morning" the suggestions use.
+const DefaultWakeHour = 9
 
-// SnoozePreset is one row of the s-key picker. Spec is parsed by ParseSnooze
-// at pick time, so the resolved wake time is always relative to now.
+// SnoozePreset is one suggestion row of the s-key picker: a label, the spec
+// ParseSnooze reads, and the time it resolves to for the moment it was built.
 type SnoozePreset struct {
 	Label string
 	Spec  string
+	At    time.Time
 }
 
-// SnoozePresets are the picker rows, top to bottom.
-var SnoozePresets = []SnoozePreset{
-	{"1 hour", "1h"},
-	{"3 hours", "3h"},
-	{"Tonight", "7pm"},
-	{"Tomorrow morning", "tomorrow"},
-	{"Monday morning", "mon"},
-	{"Next week", "7d"},
+// snoozeCandidates are the suggestion pool, in the order they are offered.
+// Specs are anchored ("today 9am", not "9am") so a candidate that has passed
+// drops out instead of silently rolling to tomorrow.
+var snoozeCandidates = []SnoozePreset{
+	{Label: "This morning", Spec: "today 9am"},
+	{Label: "Lunchtime", Spec: "today 12pm"},
+	{Label: "This afternoon", Spec: "today 2pm"},
+	{Label: "End of day", Spec: "today 5pm"},
+	{Label: "Tonight", Spec: "today 8pm"},
+	{Label: "Tomorrow morning", Spec: "tomorrow 9am"},
+	{Label: "Tomorrow afternoon", Spec: "tomorrow 2pm"},
+	{Label: "Tomorrow evening", Spec: "tomorrow 7pm"},
+	{Label: "Monday morning", Spec: "mon 9am"},
+	{Label: "Saturday morning", Spec: "sat 9am"},
+	{Label: "Next week", Spec: "7d"},
+}
+
+// snoozeSuggestionCount is how many suggestions the picker shows.
+const snoozeSuggestionCount = 6
+
+// snoozeMinLead keeps a suggestion from being almost now.
+const snoozeMinLead = 30 * time.Minute
+
+// SnoozeSuggestions returns the picker rows for now: the first candidates
+// that are still ahead by at least snoozeMinLead, with duplicate times
+// removed (Sunday's "Monday morning" is tomorrow morning).
+func SnoozeSuggestions(now time.Time) []SnoozePreset {
+	out := make([]SnoozePreset, 0, snoozeSuggestionCount)
+	seen := map[int64]bool{}
+	for _, c := range snoozeCandidates {
+		t, err := ParseSnooze(c.Spec, now)
+		if err != nil || t.Sub(now) < snoozeMinLead {
+			continue
+		}
+		if seen[t.Unix()] {
+			continue
+		}
+		seen[t.Unix()] = true
+		out = append(out, SnoozePreset{Label: c.Label, Spec: c.Spec, At: t})
+		if len(out) == snoozeSuggestionCount {
+			break
+		}
+	}
+	return out
 }
 
 // Snooze parks the session until the given time. Setting a marker mutes the

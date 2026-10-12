@@ -97,10 +97,14 @@ Moves the session into a "Snoozed" group pinned at the bottom of the list
 until a wake time, then returns it to the group it came from as the unread
 bookmark (green, "come back to this"). The row shows ⏰ when it wakes today
 and 📅 when later, with the wake time after the name (`7p`, `Mon 7a`,
-`10/12 7a`). The picker offers 1 hour, 3 hours, tonight, tomorrow morning,
-Monday morning, next week, or a typed time: `30m`, `2h`, `7am`, `7:30pm`,
-`tomorrow 9am`, `mon`, `fri 9am`, `10/12`, `10/12 11:00`. Day-only entries
-wake at 7am.
+`10/12 9a`). The picker opens on a text field: type a time (`30m`, `2h`,
+`7am`, `7:30pm`, `tomorrow 9am`, `mon`, `fri 9am`, `10/12`, `10/12 11:00`;
+day-only entries wake at 9am) and the resolved time shows underneath. Below
+it, six suggestions built for the time of day (this morning, lunchtime, this
+afternoon, end of day, tonight, tomorrow morning/afternoon/evening, Monday
+morning, Saturday morning, next week, whichever are still ahead), narrowing
+as you type; `↓` picks one. Enter takes the first matching suggestion while
+any match, else the typed time.
 
 While snoozed the session is skipped by `Shift+Left`/`Shift+Right` like red
 parking. `u` or attaching cancels the snooze and sends it home. The Snoozed

@@ -123,50 +123,103 @@ func TestSnoozeIcon(t *testing.T) {
 	}
 }
 
-// Enter on a preset emits the wake time; Enter on an unreadable custom entry
-// stays open with an inline error; Esc closes without a message.
+// The field has focus on open and typing goes straight in; Enter takes a
+// typed time that parses, falls back to the first matching suggestion when
+// the text is a label fragment, stays open with an error when nothing fits,
+// and ↓/↑ walk the suggestions. Esc closes without a message.
 func TestSnoozeDialogPicks(t *testing.T) {
+	typeKeys := func(d *SnoozeDialog, s string) *SnoozeDialog {
+		for _, r := range s {
+			d, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		}
+		return d
+	}
+	pick := func(t *testing.T, d *SnoozeDialog) (*SnoozeDialog, snoozeSetMsg) {
+		t.Helper()
+		d, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatalf("enter should emit a command (err=%q)", d.err)
+		}
+		msg, ok := cmd().(snoozeSetMsg)
+		if !ok || msg.instanceID != "sid" {
+			t.Fatalf("got %#v, want snoozeSetMsg for sid", cmd())
+		}
+		if d.IsVisible() {
+			t.Error("dialog should close after a pick")
+		}
+		return d, msg
+	}
+
 	d := NewSnoozeDialog()
 	d.SetSize(100, 40)
 	d.Show("sid", "notes")
-
-	// Preset row 0 = "1 hour"
-	d, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("enter on a preset should emit a command")
+	if d.cursor != -1 || !d.input.Focused() {
+		t.Fatalf("field should have focus on open: cursor=%d focused=%v", d.cursor, d.input.Focused())
 	}
-	msg, ok := cmd().(snoozeSetMsg)
-	if !ok || msg.instanceID != "sid" {
-		t.Fatalf("got %#v, want snoozeSetMsg for sid", cmd())
-	}
-	if d := msg.until.Sub(time.Now()); d < 59*time.Minute || d > 61*time.Minute {
-		t.Errorf("1 hour preset landed %v out", d)
-	}
-	if d.IsVisible() {
-		t.Error("dialog should close after a pick")
+	if len(d.suggestions) == 0 {
+		t.Fatal("no suggestions built")
 	}
 
-	// Typing on a preset row jumps to the custom row and takes the keys.
+	// Typed time wins.
+	d = typeKeys(d, "2h")
+	if d.input.Value() != "2h" {
+		t.Fatalf("typing should land in the field, got %q", d.input.Value())
+	}
+	d, msg := pick(t, d)
+	if dl := msg.until.Sub(time.Now()); dl < 119*time.Minute || dl > 121*time.Minute {
+		t.Errorf("2h landed %v out", dl)
+	}
+
+	// A label fragment picks the first matching suggestion.
 	d.Show("sid", "notes")
-	for _, r := range "soon" {
-		d, _ = d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	d = typeKeys(d, "tomorrow")
+	rows := d.filtered()
+	if len(rows) == 0 {
+		t.Skip("no tomorrow rows at this hour")
 	}
-	if d.cursor != d.customRow() || d.input.Value() != "soon" {
-		t.Fatalf("typing should move to custom row: cursor=%d value=%q", d.cursor, d.input.Value())
-	}
-	d, cmd = d.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd != nil || !d.IsVisible() || d.err == "" {
-		t.Errorf("bad custom entry should stay open with an error: cmd=%v visible=%v err=%q", cmd != nil, d.IsVisible(), d.err)
+	d, msg = pick(t, d)
+	if !msg.until.Equal(rows[0].At) {
+		t.Errorf("fragment should pick %q (%v), got %v", rows[0].Label, rows[0].At, msg.until)
 	}
 
-	// A readable custom entry works.
-	d.input.SetValue("2h")
-	d, cmd = d.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("enter on a valid custom entry should emit")
+	// Empty field + Enter takes the first suggestion.
+	d.Show("sid", "notes")
+	first := d.suggestions[0]
+	d, msg = pick(t, d)
+	if !msg.until.Equal(first.At) {
+		t.Errorf("empty enter should pick %q, got %v", first.Label, msg.until)
 	}
-	if m, ok := cmd().(snoozeSetMsg); !ok || m.until.Before(time.Now().Add(119*time.Minute)) {
-		t.Errorf("custom 2h: got %#v", cmd())
+
+	// ↓ walks the list; ↑ from the top returns to the field; typing returns too.
+	d.Show("sid", "notes")
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if d.cursor != 1 || d.input.Focused() {
+		t.Errorf("two downs: cursor=%d focused=%v", d.cursor, d.input.Focused())
+	}
+	second := d.suggestions[1]
+	d, msg = pick(t, d)
+	if !msg.until.Equal(second.At) {
+		t.Errorf("highlighted row should win, got %v want %v", msg.until, second.At)
+	}
+	d.Show("sid", "notes")
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if d.cursor != -1 || !d.input.Focused() {
+		t.Errorf("up from the top row should refocus the field: cursor=%d", d.cursor)
+	}
+	d, _ = d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d = typeKeys(d, "7")
+	if d.cursor != -1 || d.input.Value() != "7" {
+		t.Errorf("typing on a row should return to the field: cursor=%d value=%q", d.cursor, d.input.Value())
+	}
+
+	// Nothing fits: stays open with an error.
+	d.Show("sid", "notes")
+	d = typeKeys(d, "soon")
+	d, cmd := d.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || !d.IsVisible() || d.err == "" {
+		t.Errorf("unreadable entry should stay open with an error: cmd=%v visible=%v err=%q", cmd != nil, d.IsVisible(), d.err)
 	}
 
 	d.Show("sid", "notes")
