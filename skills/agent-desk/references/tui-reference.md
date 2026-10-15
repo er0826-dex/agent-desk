@@ -28,6 +28,7 @@ Complete reference for agent-desk Terminal UI features.
 | `d` | Delete session or group |
 | `u` | Cycle marker: unread → parked red → parked blue → normal |
 | `s` | Snooze: park until a time, then wake as unread |
+| `o` | Sort within groups: manual → recent → busy |
 
 ### Group Actions
 
@@ -90,6 +91,16 @@ dismisses it, or it clears itself after 30 seconds.
 
 This is a one-shot sweep, not a live group-by-status view — sessions you restart
 out of "Inactive" stay there until you move them or sweep again.
+
+### Sort within groups (`o`)
+
+Cycles manual → recent → busy. Recent orders the sessions inside each group by
+last transcript activity, newest first; busy by turns in the last 24 hours.
+Groups, nesting and the hand-built order are untouched, so manual brings back
+exactly what you had. `Shift+Left`/`Shift+Right` while attached walk the list,
+so they follow the sort. The header shows a `↓ recent` / `↓ busy` pill while a
+sort is on. Each row carries a `12t` badge (turns in the last 24 hours) beside
+the age; sessions idle two days or more render faded.
 
 ### Snooze a session (`s`)
 

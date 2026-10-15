@@ -122,6 +122,7 @@ func (h *HelpOverlay) View() string {
 				{"v", "Toggle preview mode (output/stats/both)"},
 				{"u", "Cycle unread → parked → normal"},
 				{"s", "Snooze until a time (wakes as unread)"},
+				{"o", "Sort within groups: manual → recent → busy"},
 				{"K / J", "Reorder up/down"},
 				{"c", "Copy output to clipboard"},
 				{"x", "Send output to session"},

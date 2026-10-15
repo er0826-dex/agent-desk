@@ -11,6 +11,16 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 
 ## [Unreleased]
 
+### Added
+- **Sort within groups (`o`).** Cycles manual → recent → busy. Recent orders each group's sessions by last
+  transcript activity, newest first; busy by turns in the last 24 hours, most first. Groups, nesting and the
+  hand-built order are untouched, so manual restores exactly what you had. The attached `Shift+Left`/
+  `Shift+Right` ring walks the list, so it follows the sort. A pill in the header shows the mode when it is
+  not manual; it persists with the other view state.
+- **Activity on the row.** A `12t` badge is turns in the last 24 hours (assistant turns, from a bounded tail
+  read of the transcript, 4 MB max, recomputed when the file grows or every ten minutes). Sessions idle for
+  two days or more render faded, so a long list reads at a glance.
+
 ### Changed
 - **Snooze picker: type first, landmarks below.** The text field comes first with focus, so typing starts
   immediately and the resolved time shows underneath as you type. The fixed presets (1h, 3h, …) are

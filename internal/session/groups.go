@@ -53,7 +53,12 @@ type Group struct {
 type GroupTree struct {
 	Groups    map[string]*Group // path -> group
 	GroupList []*Group          // Ordered list of groups
-	Expanded  map[string]bool   // Collapsed state persistence
+
+	// SortKey, when set, orders the top-level sessions inside each group by
+	// descending key (ties keep manual Order) in Flatten. Sub-sessions stay
+	// under their parent. nil = manual order. Never touches persisted Order.
+	SortKey  func(*Instance) int64
+	Expanded map[string]bool // Collapsed state persistence
 }
 
 // NewGroupTree creates a new group tree from instances
@@ -403,6 +408,15 @@ func (t *GroupTree) flatten(all bool) []Item {
 				} else {
 					parentSessions = append(parentSessions, sess)
 				}
+			}
+			if t.SortKey != nil {
+				keys := make(map[*Instance]int64, len(parentSessions))
+				for _, s := range parentSessions {
+					keys[s] = t.SortKey(s)
+				}
+				sort.SliceStable(parentSessions, func(a, b int) bool {
+					return keys[parentSessions[a]] > keys[parentSessions[b]]
+				})
 			}
 
 			// Count total top-level items (parent sessions + orphan sub-sessions whose parent is in different group)

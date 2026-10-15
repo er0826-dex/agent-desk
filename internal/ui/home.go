@@ -173,6 +173,7 @@ type Home struct {
 	viewOffset     int            // First visible item index (for scrolling)
 	isAttaching    atomic.Bool    // Prevents View() output during attach (fixes Bubble Tea Issue #431) - atomic for thread safety
 	statusFilter   session.Status // Filter sessions by status ("" = all, or specific status)
+	sortMode       sortMode       // Order of sessions within each group (o key)
 	previewMode    PreviewMode    // What to show in preview pane (both, output-only, analytics-only)
 	err            error
 	errTime        time.Time  // When error occurred (for auto-dismiss)
@@ -329,7 +330,45 @@ type uiState struct {
 	PreviewMode         int    `json:"preview_mode"`
 	StatusFilter        string `json:"status_filter,omitempty"`
 	SidebarWidthPercent int    `json:"sidebar_width_percent,omitempty"`
+	SortMode            string `json:"sort_mode,omitempty"`
 }
+
+// sortMode orders the sessions inside each group (the o key). Groups and
+// manual Order are untouched; "manual" is the hand-built order.
+type sortMode int
+
+const (
+	sortManual sortMode = iota // persisted Order (K/J)
+	sortRecent                 // last transcript activity, newest first
+	sortBusy                   // turns in the last 24h, most first
+)
+
+func (m sortMode) String() string {
+	switch m {
+	case sortRecent:
+		return "recent"
+	case sortBusy:
+		return "busy"
+	default:
+		return "manual"
+	}
+}
+
+func (m sortMode) next() sortMode { return (m + 1) % 3 }
+
+func parseSortMode(s string) sortMode {
+	switch s {
+	case "recent":
+		return sortRecent
+	case "busy":
+		return sortBusy
+	default:
+		return sortManual
+	}
+}
+
+// staleAfter is how long a session can sit idle before its row fades.
+const staleAfter = 48 * time.Hour
 
 // deletedSessionEntry holds a deleted session for undo restore
 type deletedSessionEntry struct {
@@ -837,6 +876,7 @@ func (h *Home) restoreState(state reloadState) {
 
 // rebuildFlatItems rebuilds the flattened view from group tree
 func (h *Home) rebuildFlatItems() {
+	h.groupTree.SortKey = h.sortKey()
 	allItems := h.groupTree.Flatten()
 
 	// Apply status filter if active
@@ -4136,6 +4176,14 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case "o":
+		// Cycle the within-group sort: manual → recent → busy. The attached
+		// Shift+Left/Right ring walks the list, so it follows.
+		h.sortMode = h.sortMode.next()
+		h.rebuildFlatItems()
+		h.saveUIState()
+		return h, nil
+
 	case "s":
 		// Snooze: park the session until a wake time, after which the tick
 		// flips it to the unread bookmark. Grouping is left alone on wake.
@@ -4605,6 +4653,19 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // saveInstances saves instances to storage
+// sortKey is the group-tree ordering for the current sort mode, nil for
+// manual. Keys are descending: newest activity or most turns first.
+func (h *Home) sortKey() func(*session.Instance) int64 {
+	switch h.sortMode {
+	case sortRecent:
+		return func(i *session.Instance) int64 { return i.GetLastActivityTime().UnixNano() }
+	case sortBusy:
+		return func(i *session.Instance) int64 { return int64(i.RecentTurns()) }
+	default:
+		return nil
+	}
+}
+
 // snoozeIcon is the row marker for a snoozed session: a clock when it wakes
 // today, a calendar when later.
 func snoozeIcon(until, now time.Time) string {
@@ -4807,6 +4868,7 @@ func (h *Home) saveUIState() {
 		PreviewMode:         int(h.previewMode),
 		StatusFilter:        string(h.statusFilter),
 		SidebarWidthPercent: h.sidebarWidthPercent,
+		SortMode:            h.sortMode.String(),
 	}
 
 	// Capture cursor position
@@ -4858,6 +4920,7 @@ func (h *Home) loadUIState() {
 	// Apply preview mode and status filter immediately
 	h.previewMode = PreviewMode(state.PreviewMode)
 	h.statusFilter = session.Status(state.StatusFilter)
+	h.sortMode = parseSortMode(state.SortMode)
 
 	// Apply sidebar width if valid
 	if state.SidebarWidthPercent >= 15 && state.SidebarWidthPercent <= 50 {
@@ -5577,8 +5640,17 @@ func (h *Home) renderFilterBar() string {
 	}
 
 	// Hint for keyboard shortcuts (shift+number to filter, 0 to clear)
+	// Sort pill: only when the list is not in manual order.
+	if h.sortMode != sortManual {
+		pills = append(pills, lipgloss.NewStyle().
+			Foreground(ColorBg).
+			Background(ColorAccent).
+			Bold(true).
+			Padding(0, 1).Render("↓ "+h.sortMode.String()))
+	}
+
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment).Faint(true)
-	hint := hintStyle.Render("  !@#$ filter • 0 all")
+	hint := hintStyle.Render("  !@#$ filter • 0 all • o sort")
 
 	// Join pills with spaces (leading space replaces Padding)
 	filterRow := " " + strings.Join(pills, " ") + hint
@@ -6951,6 +7023,10 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 		titleStyle = SessionTitleError
 	default:
 		titleStyle = SessionTitleDefault
+		// Idle two days or more: fade, so a live list reads at a glance.
+		if last := inst.GetLastActivityTime(); !last.IsZero() && time.Since(last) >= staleAfter {
+			titleStyle = SessionTitleStale
+		}
 	}
 
 	// Manual marker override from the u-key cycle. Paints the dot regardless of
@@ -7035,6 +7111,16 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 		colorSwatch = lipgloss.NewStyle().Foreground(lipgloss.Color(cs.Accent)).Render("▍") + " "
 	}
 
+	// Turns in the last 24h ("12t"): how much has actually happened here.
+	turnsBadge := ""
+	if n := inst.RecentTurns(); n > 0 {
+		tStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
+		if selected {
+			tStyle = SessionStatusSelStyle
+		}
+		turnsBadge = tStyle.Render(fmt.Sprintf(" %dt", n))
+	}
+
 	// Staleness badge: how long since the session last showed activity.
 	// Gives a quick read on which sessions have gone stale.
 	staleness := ""
@@ -7069,7 +7155,7 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 	}
 
 	// Build row: [baseIndent][selection][tree][status] [swatch][title] [worktree][model][staleness]
-	row := fmt.Sprintf("%s%s%s %s%s%s%s%s%s%s%s", baseIndent, selectionPrefix, treeStyle.Render(treeConnector), status, statusSep, colorSwatch, title, snoozeBadge, worktreeBadge, modelBadge, staleness)
+	row := fmt.Sprintf("%s%s%s %s%s%s%s%s%s%s%s%s", baseIndent, selectionPrefix, treeStyle.Render(treeConnector), status, statusSep, colorSwatch, title, snoozeBadge, worktreeBadge, modelBadge, turnsBadge, staleness)
 	b.WriteString(row)
 	b.WriteString("\n")
 }

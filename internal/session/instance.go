@@ -119,6 +119,12 @@ type Instance struct {
 	lastJSONLPath string
 	cachedModel   string
 
+	// Turns in the last 24h, from a bounded tail read of the transcript
+	// (see refreshRecentTurns). Shown on the row and used by the "busy" sort.
+	recentTurns     int
+	recentTurnsAt   time.Time // when it was last computed
+	recentTurnsSize int64     // file size it was computed for
+
 	// MCP tracking - which MCPs were loaded when session started/restarted
 	// Used to detect pending MCPs (added after session start) and stale MCPs (removed but still running)
 	LoadedMCPNames []string `json:"loaded_mcp_names,omitempty"`
@@ -2450,6 +2456,7 @@ func (i *Instance) readJSONLTail(path string) string {
 	// Record the transcript mtime as the "last interacted" signal (see
 	// lastLogActivityAt) — set on every call, including the cached-size path.
 	i.lastLogActivityAt = info.ModTime()
+	i.refreshRecentTurns(path, size, time.Now())
 
 	// If same file and same size, return cached model
 	if path == i.lastJSONLPath && size == i.lastJSONLSize {
@@ -2492,6 +2499,87 @@ func (i *Instance) readJSONLTail(path string) string {
 	i.lastJSONLPath = path
 	i.lastJSONLSize = size
 	return i.cachedModel
+}
+
+// recentTurnsWindow is how far back a turn still counts as recent.
+const recentTurnsWindow = 24 * time.Hour
+
+// recentTurnsMaxBytes bounds the tail read for the count. Transcripts run to
+// hundreds of MB; a day of turns fits comfortably in this.
+const recentTurnsMaxBytes int64 = 4 * 1024 * 1024
+
+// refreshRecentTurns recomputes the 24h turn count when the transcript has
+// grown or the count is older than ten minutes (turns age out of the window
+// even when nothing is written). Caller holds i.mu, as for readJSONLTail.
+func (i *Instance) refreshRecentTurns(path string, size int64, now time.Time) {
+	if size == i.recentTurnsSize && now.Sub(i.recentTurnsAt) < 10*time.Minute {
+		return
+	}
+	i.recentTurns = countRecentTurns(path, size, now.Add(-recentTurnsWindow))
+	i.recentTurnsAt = now
+	i.recentTurnsSize = size
+}
+
+// RecentTurns is the number of assistant turns in the last 24h, or 0 when
+// the transcript has not been read yet.
+func (i *Instance) RecentTurns() int { return i.recentTurns }
+
+// countRecentTurns counts assistant entries with a timestamp at or after
+// since, reading at most recentTurnsMaxBytes from the end of the file.
+// Lines are chronological, so the scan runs newest-first and stops at the
+// first entry older than since.
+func countRecentTurns(path string, size int64, since time.Time) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	offset := size - recentTurnsMaxBytes
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > 0 {
+		if _, err := f.Seek(offset, 0); err != nil {
+			return 0
+		}
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return 0
+	}
+	if offset > 0 {
+		if idx := bytes.IndexByte(data, '\n'); idx >= 0 {
+			data = data[idx+1:]
+		}
+	}
+	return countRecentTurnsIn(data, since)
+}
+
+// countRecentTurnsIn is countRecentTurns over bytes already read.
+func countRecentTurnsIn(data []byte, since time.Time) int {
+	type entry struct {
+		Type      string    `json:"type"`
+		Timestamp time.Time `json:"timestamp"`
+	}
+	lines := bytes.Split(data, []byte{'\n'})
+	count := 0
+	for n := len(lines) - 1; n >= 0; n-- {
+		line := bytes.TrimSpace(lines[n])
+		if len(line) == 0 {
+			continue
+		}
+		var e entry
+		if err := json.Unmarshal(line, &e); err != nil || e.Timestamp.IsZero() {
+			continue
+		}
+		if e.Timestamp.Before(since) {
+			break
+		}
+		if e.Type == "assistant" {
+			count++
+		}
+	}
+	return count
 }
 
 // getGeminiLastResponse extracts the last assistant message from Gemini's JSON file
