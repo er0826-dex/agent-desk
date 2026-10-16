@@ -11,6 +11,8 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-10-16
+
 ### Added
 - **Sort within groups (`o`).** Cycles manual → recent → busy. Recent orders each group's sessions by last
   transcript activity, newest first; busy by turns in the last 24 hours, most first. Groups, nesting and the
