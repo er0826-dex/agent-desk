@@ -11,6 +11,8 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-10-21
+
 ### Changed
 - **Session rows: right-aligned columns.** Model family as one letter (`o` Opus, `f` Fable, `s` Sonnet,
   `h` Haiku, `g` Gemini; versions stay in the preview) with ⚡ for auto mode, turns in the last 24 hours (`·` when
