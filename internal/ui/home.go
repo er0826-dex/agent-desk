@@ -4662,11 +4662,12 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 const (
 	colModelW = 7 // "o5.5⚡" (the bolt is two cells)
 	colTurnsW = 3 // "12", "·" when none
-	colAgeW   = 4 // "40m", "2h", "3d", "2w"
+	colAgeW   = 3 // "40m", "5h", "3d", "2w", "3w+": never more than three
 )
 
-// columnAge is a coarse age for the row column: minutes, hours, days, weeks,
-// months. The exact time stays in the preview.
+// columnAge is a coarse age, three characters at most: 1m–59m, 1h–23h,
+// 1d–6d, 1w–2w, then 3w+ for three weeks or more. The exact time stays in the
+// preview.
 func columnAge(t, now time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -4684,12 +4685,12 @@ func columnAge(t, now time.Time) string {
 		return fmt.Sprintf("%dm", m)
 	case d < 24*time.Hour:
 		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d < 14*24*time.Hour:
+	case d < 7*24*time.Hour:
 		return fmt.Sprintf("%dd", int(d.Hours())/24)
-	case d < 60*24*time.Hour:
+	case d < 21*24*time.Hour:
 		return fmt.Sprintf("%dw", int(d.Hours())/(24*7))
 	default:
-		return fmt.Sprintf("%dmo", int(d.Hours())/(24*30))
+		return "3w+"
 	}
 }
 

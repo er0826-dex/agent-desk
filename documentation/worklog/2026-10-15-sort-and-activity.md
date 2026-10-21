@@ -57,3 +57,7 @@ rows put the wake time across model+turns. `renderSessionList` records the
 list width on Home (`listRowWidth`) so the row pads to it and truncates the
 title with `…`; the worktree badge drops first. Tests pin every row's column
 width and the full row width.
+
+Same day, Eric: age at three characters or less. `columnAge` now caps at
+`3w+` (1m–59m, 1h–23h, 1d–6d, 1w–2w, 3w+); the column is 3 wide. The ⚡ stays:
+he asked, then kept it once it read as auto mode.

@@ -61,10 +61,15 @@ func TestColumnAge(t *testing.T) {
 	cases := map[time.Duration]string{
 		10 * time.Second:    "1m",
 		40 * time.Minute:    "40m",
+		59 * time.Minute:    "59m",
 		5 * time.Hour:       "5h",
+		23 * time.Hour:      "23h",
 		3 * 24 * time.Hour:  "3d",
+		6 * 24 * time.Hour:  "6d",
+		7 * 24 * time.Hour:  "1w",
 		20 * 24 * time.Hour: "2w",
-		90 * 24 * time.Hour: "3mo",
+		21 * 24 * time.Hour: "3w+",
+		90 * 24 * time.Hour: "3w+",
 	}
 	for d, want := range cases {
 		if got := columnAge(now.Add(-d), now); got != want {

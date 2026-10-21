@@ -14,8 +14,8 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 ### Changed
 - **Session rows: right-aligned columns.** Model (+⚡ for auto mode), turns in the last 24 hours (`·` when
   none) and age now sit in fixed columns at the right edge of the list instead of trailing the title, so
-  they read straight down. Age is coarse (`40m`, `5h`, `3d`, `2w`, `3mo`); the exact time stays in the
-  preview. A snoozed row shows its wake time across the model and turns columns. Long titles are truncated
+  they read straight down. Age is three characters at most (`40m`, `5h`, `3d`, `2w`, then `3w+`); the exact
+  time stays in the preview. A snoozed row shows its wake time across the model and turns columns. Long titles are truncated
   with `…` to keep the columns in place; a worktree branch badge drops first when space is short.
 - **Snooze in place.** A snoozed session now stays in its own group instead of moving to a global "Snoozed"
   group: dimmed, with the ⏰/📅 marker and wake time, sunk below that group's live sessions (soonest wake
