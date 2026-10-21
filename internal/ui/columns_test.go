@@ -41,6 +41,28 @@ func TestSessionColumnsFixedWidth(t *testing.T) {
 	}
 }
 
+// The model column is the family only: no version.
+func TestModelFamily(t *testing.T) {
+	cases := map[string]string{
+		"claude-opus-5-5":            "o",
+		"claude-fable-5-1":           "f",
+		"claude-sonnet-5-5":          "s",
+		"claude-haiku-4-5-20251001":  "h",
+		"claude-3-5-sonnet-20241022": "s",
+		"":                           "",
+	}
+	for id, want := range cases {
+		i := &session.Instance{Tool: "claude", ClaudeModel: id}
+		if got := i.ModelFamily(); got != want {
+			t.Errorf("%q: got %q want %q", id, got, want)
+		}
+	}
+	g := &session.Instance{Tool: "gemini", GeminiModel: "gemini-2.5-pro"}
+	if got := g.ModelFamily(); got != "g" {
+		t.Errorf("gemini: got %q", got)
+	}
+}
+
 // Rows render to exactly the list width, with the title truncated to make room.
 func TestSessionRowFitsWidth(t *testing.T) {
 	h := &Home{listRowWidth: 40}

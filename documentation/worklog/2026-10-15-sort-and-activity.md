@@ -61,3 +61,9 @@ width and the full row width.
 Same day, Eric: age at three characters or less. `columnAge` now caps at
 `3w+` (1m–59m, 1h–23h, 1d–6d, 1w–2w, 3w+); the column is 3 wide. The ⚡ stays:
 he asked, then kept it once it read as auto mode.
+
+Then: *"I don't need the 5.5 / 5.1, just whether it's Fable or Opus."*
+`Instance.ModelFamily()` (first letter of the short name: o, f, s, h, g); the
+model column is 3 cells (letter + two-cell bolt). With the narrower columns a
+snoozed row's wake time spans all three columns instead of model+turns, so a
+date like `10/26 9a` still fits; age is dropped on snoozed rows.

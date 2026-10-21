@@ -99,9 +99,9 @@ last transcript activity, newest first; busy by turns in the last 24 hours.
 Groups, nesting and the hand-built order are untouched, so manual brings back
 exactly what you had. `Shift+Left`/`Shift+Right` while attached walk the list,
 so they follow the sort. The header shows a `↓ recent` / `↓ busy` pill while a
-sort is on. Each row ends in three right-aligned columns: model (+⚡ in auto
-mode), turns in the last 24 hours (`·` when none), and age, three characters at most (`40m`, `5h`,
-`3d`, `2w`, `3w+`); a snoozed row shows its wake time instead of model and turns.
+sort is on. Each row ends in three right-aligned columns: model family as one
+letter (`o` Opus, `f` Fable, `s` Sonnet; +⚡ in auto mode), turns in the last 24 hours (`·` when none), and age, three characters at most (`40m`, `5h`,
+`3d`, `2w`, `3w+`); a snoozed row shows its wake time across all three.
 Sessions idle two days or more render faded.
 
 ### Snooze a session (`s`)

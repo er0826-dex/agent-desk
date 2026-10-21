@@ -269,6 +269,17 @@ func (inst *Instance) ModelShortName() string {
 	return ""
 }
 
+// ModelFamily is the one-letter model family for the session row: "o" Opus,
+// "f" Fable, "s" Sonnet, "h" Haiku, "g" Gemini; the first letter of any other
+// model ID. Versions are left to the preview. "" when the model is unknown.
+func (inst *Instance) ModelFamily() string {
+	short := inst.ModelShortName()
+	if short == "" {
+		return ""
+	}
+	return strings.ToLower(short[:1])
+}
+
 // shortClaudeModel abbreviates a Claude model ID to a terse badge form:
 // the family's first letter plus its dotted version ("claude-opus-4-8" ->
 // "o4.8", "claude-fable-5" -> "f5", "claude-3-5-sonnet-20241022" -> "s3.5").

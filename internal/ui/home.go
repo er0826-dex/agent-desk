@@ -4660,7 +4660,7 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // saveInstances saves instances to storage
 // Column widths for the session row's right edge (cells).
 const (
-	colModelW = 7 // "o5.5⚡" (the bolt is two cells)
+	colModelW = 3 // "o⚡": model family letter + the two-cell auto bolt
 	colTurnsW = 3 // "12", "·" when none
 	colAgeW   = 3 // "40m", "5h", "3d", "2w", "3w+": never more than three
 )
@@ -4708,9 +4708,10 @@ func padLeftW(s string, w int) string {
 	return s
 }
 
-// sessionColumns renders the fixed-width right edge of a session row:
-// model+⚡ (left-aligned), turns in the last 24h, age. Snoozed rows show the
-// wake time across the model and turns columns instead.
+// sessionColumns renders the fixed-width right edge of a session row: model
+// family letter + ⚡ (left-aligned), turns in the last 24h, age. Snoozed rows
+// show the wake time across all three instead; for a sleeping session that is
+// the number that matters.
 func (h *Home) sessionColumns(inst *session.Instance, selected bool) string {
 	dim := lipgloss.NewStyle().Foreground(ColorTextDim)
 	mdStyle := lipgloss.NewStyle().Foreground(ColorPurple)
@@ -4722,8 +4723,9 @@ func (h *Home) sessionColumns(inst *session.Instance, selected bool) string {
 	age := padLeftW(columnAge(inst.GetLastActivityTime(), now), colAgeW)
 
 	if inst.Flag == session.FlagSnoozed && !inst.SnoozeUntil.IsZero() {
-		wake := padLeftW(session.FormatSnoozeUntil(inst.SnoozeUntil, now), colModelW+1+colTurnsW)
-		return dim.Render(wake) + " " + dim.Render(age)
+		span := colModelW + 1 + colTurnsW + 1 + colAgeW
+		wake := truncateToWidth(session.FormatSnoozeUntil(inst.SnoozeUntil, now), span, "")
+		return dim.Render(padLeftW(wake, span))
 	}
 
 	const bolt = "⚡"
@@ -4732,7 +4734,7 @@ func (h *Home) sessionColumns(inst *session.Instance, selected bool) string {
 	if auto {
 		room -= lipgloss.Width(bolt)
 	}
-	name := inst.ModelShortName()
+	name := inst.ModelFamily()
 	if lipgloss.Width(name) > room {
 		name = truncateToWidth(name, room, "")
 	}
