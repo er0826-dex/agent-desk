@@ -45,3 +45,15 @@ refresh cache on size and age. `ui/sort_test.go`: mode cycle, parse, keys.
 - No flat recent-switcher lens (option 2). Next step if a cross-group view is
   what he reaches for.
 - "Busy" counts only Claude transcripts; other tools read 0.
+
+## 10/21: the row's info moved into right-aligned columns
+
+Eric asked to clean up the shorthand on each row (turns, recency, model).
+Three mockups on his real Legal titles: A fixed right-aligned columns, B
+exceptions only (model only when unusual, turns as a bar), C activity as
+title brightness. He chose A. `sessionColumns` renders model+⚡ (7 cells, the
+bolt is two), turns (3, `·` for none), coarse age (4, `columnAge`); snoozed
+rows put the wake time across model+turns. `renderSessionList` records the
+list width on Home (`listRowWidth`) so the row pads to it and truncates the
+title with `…`; the worktree badge drops first. Tests pin every row's column
+width and the full row width.

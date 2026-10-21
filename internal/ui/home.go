@@ -174,6 +174,7 @@ type Home struct {
 	isAttaching    atomic.Bool    // Prevents View() output during attach (fixes Bubble Tea Issue #431) - atomic for thread safety
 	statusFilter   session.Status // Filter sessions by status ("" = all, or specific status)
 	sortMode       sortMode       // Order of sessions within each group (o key)
+	listRowWidth   int            // width of the session list, set per render (right-aligned columns)
 	previewMode    PreviewMode    // What to show in preview pane (both, output-only, analytics-only)
 	err            error
 	errTime        time.Time  // When error occurred (for auto-dismiss)
@@ -4657,6 +4658,104 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // saveInstances saves instances to storage
+// Column widths for the session row's right edge (cells).
+const (
+	colModelW = 7 // "o5.5⚡" (the bolt is two cells)
+	colTurnsW = 3 // "12", "·" when none
+	colAgeW   = 4 // "40m", "2h", "3d", "2w"
+)
+
+// columnAge is a coarse age for the row column: minutes, hours, days, weeks,
+// months. The exact time stays in the preview.
+func columnAge(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m < 1 {
+			m = 1
+		}
+		return fmt.Sprintf("%dm", m)
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 14*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	case d < 60*24*time.Hour:
+		return fmt.Sprintf("%dw", int(d.Hours())/(24*7))
+	default:
+		return fmt.Sprintf("%dmo", int(d.Hours())/(24*30))
+	}
+}
+
+func padRightW(s string, w int) string {
+	if n := lipgloss.Width(s); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
+}
+
+func padLeftW(s string, w int) string {
+	if n := lipgloss.Width(s); n < w {
+		return strings.Repeat(" ", w-n) + s
+	}
+	return s
+}
+
+// sessionColumns renders the fixed-width right edge of a session row:
+// model+⚡ (left-aligned), turns in the last 24h, age. Snoozed rows show the
+// wake time across the model and turns columns instead.
+func (h *Home) sessionColumns(inst *session.Instance, selected bool) string {
+	dim := lipgloss.NewStyle().Foreground(ColorTextDim)
+	mdStyle := lipgloss.NewStyle().Foreground(ColorPurple)
+	autoStyle := lipgloss.NewStyle().Foreground(ColorYellow)
+	if selected {
+		dim, mdStyle, autoStyle = SessionStatusSelStyle, SessionStatusSelStyle, SessionStatusSelStyle
+	}
+	now := time.Now()
+	age := padLeftW(columnAge(inst.GetLastActivityTime(), now), colAgeW)
+
+	if inst.Flag == session.FlagSnoozed && !inst.SnoozeUntil.IsZero() {
+		wake := padLeftW(session.FormatSnoozeUntil(inst.SnoozeUntil, now), colModelW+1+colTurnsW)
+		return dim.Render(wake) + " " + dim.Render(age)
+	}
+
+	const bolt = "⚡"
+	auto := inst.IsAutoMode()
+	room := colModelW
+	if auto {
+		room -= lipgloss.Width(bolt)
+	}
+	name := inst.ModelShortName()
+	if lipgloss.Width(name) > room {
+		name = truncateToWidth(name, room, "")
+	}
+	model := ""
+	if name != "" {
+		model = mdStyle.Render(name)
+	}
+	used := lipgloss.Width(name)
+	if auto {
+		model += autoStyle.Render(bolt)
+		used += lipgloss.Width(bolt)
+	}
+	model += strings.Repeat(" ", max(0, colModelW-used))
+
+	turns := "·"
+	if n := inst.RecentTurns(); n > 0 {
+		turns = fmt.Sprintf("%d", n)
+		if n > 999 {
+			turns = "999"
+		}
+	}
+	return model + " " + dim.Render(padLeftW(turns, colTurnsW)) + " " + dim.Render(age)
+}
+
 // sortKey is the group-tree ordering for the current sort mode, nil for
 // manual. Keys are descending: newest activity or most turns first.
 func (h *Home) sortKey() func(*session.Instance) int64 {
@@ -6831,6 +6930,7 @@ func (h *Home) helpKey(key, desc string) string {
 // renderSessionList renders the left panel with hierarchical session list
 func (h *Home) renderSessionList(width, height int) string {
 	var b strings.Builder
+	h.listRowWidth = width
 
 	if len(h.flatItems) == 0 {
 		// Responsive empty state - adapts to available space
@@ -7095,17 +7195,6 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 	if lipgloss.Width(statusIcon) > 1 {
 		statusSep = ""
 	}
-	title := titleStyle.Render(inst.Title)
-
-	// Snooze badge: when the session wakes ("Mon 7a")
-	snoozeBadge := ""
-	if inst.Flag == session.FlagSnoozed && !inst.SnoozeUntil.IsZero() {
-		szStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
-		if selected {
-			szStyle = SessionStatusSelStyle
-		}
-		snoozeBadge = szStyle.Render(" " + session.FormatSnoozeUntil(inst.SnoozeUntil, time.Now()))
-	}
 
 	// Worktree branch badge for sessions running in git worktrees
 	worktreeBadge := ""
@@ -7128,51 +7217,35 @@ func (h *Home) renderSessionItem(b *strings.Builder, item session.Item, selected
 		colorSwatch = lipgloss.NewStyle().Foreground(lipgloss.Color(cs.Accent)).Render("▍") + " "
 	}
 
-	// Turns in the last 24h ("12t"): how much has actually happened here.
-	turnsBadge := ""
-	if n := inst.RecentTurns(); n > 0 {
-		tStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
-		if selected {
-			tStyle = SessionStatusSelStyle
-		}
-		turnsBadge = tStyle.Render(fmt.Sprintf(" %dt", n))
-	}
+	// Right-aligned columns: model+⚡ · turns in 24h · age. A snoozed row
+	// shows its wake time across the model and turns columns.
+	cols := h.sessionColumns(inst, selected)
 
-	// Staleness badge: how long since the session last showed activity.
-	// Gives a quick read on which sessions have gone stale.
-	staleness := ""
-	if lastActive := inst.GetLastActivityTime(); !lastActive.IsZero() {
-		stStyle := lipgloss.NewStyle().Foreground(ColorTextDim)
-		if selected {
-			stStyle = SessionStatusSelStyle
+	// Left part: everything up to and including the title. The title is
+	// truncated so the columns keep their place at the right edge.
+	prefix := baseIndent + selectionPrefix + treeStyle.Render(treeConnector) + " " + status + statusSep + colorSwatch
+	titleText := inst.Title
+	if h.listRowWidth > 0 {
+		budget := h.listRowWidth - 1 - lipgloss.Width(prefix) - lipgloss.Width(cols) - 1
+		if budget-lipgloss.Width(worktreeBadge) < 8 {
+			worktreeBadge = ""
 		}
-		staleness = stStyle.Render(" (" + formatCompactDuration(lastActive) + ")")
-	}
-
-	// Model + mode badge: abbreviated model name, ⚡ when launched in an
-	// auto-approve mode (skip-permissions / yolo)
-	modelBadge := ""
-	{
-		name := inst.ModelShortName()
-		auto := inst.IsAutoMode()
-		if name != "" || auto {
-			mdStyle := lipgloss.NewStyle().Foreground(ColorPurple)
-			autoStyle := lipgloss.NewStyle().Foreground(ColorYellow)
-			if selected {
-				mdStyle = SessionStatusSelStyle
-				autoStyle = SessionStatusSelStyle
-			}
-			if name != "" {
-				modelBadge = mdStyle.Render(" " + name)
-			}
-			if auto {
-				modelBadge += autoStyle.Render("⚡")
-			}
+		budget -= lipgloss.Width(worktreeBadge)
+		if budget < 1 {
+			budget = 1
 		}
+		titleText = truncateToWidth(titleText, budget, "…")
 	}
+	left := prefix + titleStyle.Render(titleText) + worktreeBadge
 
-	// Build row: [baseIndent][selection][tree][status] [swatch][title] [worktree][model][staleness]
-	row := fmt.Sprintf("%s%s%s %s%s%s%s%s%s%s%s%s", baseIndent, selectionPrefix, treeStyle.Render(treeConnector), status, statusSep, colorSwatch, title, snoozeBadge, worktreeBadge, modelBadge, turnsBadge, staleness)
+	row := left + " " + cols
+	if h.listRowWidth > 0 {
+		pad := h.listRowWidth - 1 - lipgloss.Width(left) - lipgloss.Width(cols)
+		if pad < 1 {
+			pad = 1
+		}
+		row = left + strings.Repeat(" ", pad) + cols
+	}
 	b.WriteString(row)
 	b.WriteString("\n")
 }
