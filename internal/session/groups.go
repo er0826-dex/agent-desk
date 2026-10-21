@@ -12,9 +12,10 @@ const DefaultGroupName = "My Sessions"
 // DefaultGroupPath is the normalized path for the default group (used for lookups and protection)
 const DefaultGroupPath = "my-sessions"
 
-// SnoozedGroupPath is the system group snoozed sessions sit in. It is created
-// on first snooze, pinned to the bottom of the list, and removed again when
-// its last session wakes or is cancelled.
+// SnoozedGroupPath is the legacy system group snoozed sessions used to be
+// moved into (v1.0.21–1.0.22). Snoozing is now in place; the home view sends
+// anything still in this group back to its home group on load, and the group
+// is removed once empty. Kept pinned last until then.
 const SnoozedGroupPath = "Snoozed"
 
 // ItemType represents the type of item in the flattened list
@@ -418,6 +419,18 @@ func (t *GroupTree) flatten(all bool) []Item {
 					return keys[parentSessions[a]] > keys[parentSessions[b]]
 				})
 			}
+			// Snoozed sessions sink below the live ones in their group, soonest
+			// wake first, whatever the sort: a snoozed section inside the group.
+			sort.SliceStable(parentSessions, func(a, b int) bool {
+				sa, sb := parentSessions[a].Flag == FlagSnoozed, parentSessions[b].Flag == FlagSnoozed
+				if sa != sb {
+					return sb
+				}
+				if sa {
+					return parentSessions[a].SnoozeUntil.Before(parentSessions[b].SnoozeUntil)
+				}
+				return false
+			})
 
 			// Count total top-level items (parent sessions + orphan sub-sessions whose parent is in different group)
 			// For determining IsLastInGroup, we need to know how many top-level items there are

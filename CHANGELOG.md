@@ -11,6 +11,13 @@ the in-app updater downloads the `agent-desk_<version>_<os>_<arch>.tar.gz` asset
 
 ## [Unreleased]
 
+### Changed
+- **Snooze in place.** A snoozed session now stays in its own group instead of moving to a global "Snoozed"
+  group: dimmed, with the ⏰/📅 marker and wake time, sunk below that group's live sessions (soonest wake
+  first, under any sort), and skipped by the Shift rings as before. On wake it brightens as unread in its
+  manual place. Sessions left in the old Snoozed group go back to their home group on first launch, still
+  snoozed, and the group is removed.
+
 ## [1.0.22] - 2026-10-16
 
 ### Added

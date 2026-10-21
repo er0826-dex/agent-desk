@@ -104,9 +104,9 @@ the age; sessions idle two days or more render faded.
 
 ### Snooze a session (`s`)
 
-Moves the session into a "Snoozed" group pinned at the bottom of the list
-until a wake time, then returns it to the group it came from as the unread
-bookmark (green, "come back to this"). The row shows ⏰ when it wakes today
+Parks the session in place until a wake time: it stays in its group, dimmed,
+sunk below that group's live sessions (soonest wake first), then brightens as
+the unread bookmark (green, "come back to this") in its usual spot. The row shows ⏰ when it wakes today
 and 📅 when later, with the wake time after the name (`7p`, `Mon 7a`,
 `10/12 9a`). The picker opens on a text field: type a time (`30m`, `2h`,
 `7am`, `7:30pm`, `tomorrow 9am`, `mon`, `fri 9am`, `10/12`, `10/12 11:00`;
@@ -119,9 +119,7 @@ else the typed time. Every pick is counted by row (typed times as "typed");
 `agent-desk snooze` prints the tally, the evidence for reshaping the list.
 
 While snoozed the session is skipped by `Shift+Left`/`Shift+Right` like red
-parking. `u` or attaching cancels the snooze and sends it home. The Snoozed
-group disappears when its last session leaves. If you move a snoozed session
-out of Snoozed by hand, it stays where you put it when it wakes.
+parking. `u` or attaching cancels the snooze.
 
 > **Note:** `M` opened an MCP Manager dialog in earlier versions. MCPs are now
 > managed from the CLI (`agent-desk mcp list|attach|detach`) — see the CLI

@@ -2287,6 +2287,10 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			// Snoozing is in place now: empty the legacy Snoozed group.
+			if h.migrateLegacySnoozed() {
+				h.forceSaveInstances()
+			}
 			h.search.SetItems(h.instances)
 
 			// Re-apply pending title changes that were lost during reload.
@@ -4675,25 +4679,38 @@ func snoozeIcon(until, now time.Time) string {
 	return "📅"
 }
 
-// snoozeSession parks a session until the wake time and moves it to the
-// Snoozed group at the bottom of the list, remembering where it came from.
-// Re-snoozing an already snoozed session keeps the original home group.
+// snoozeSession parks a session in place until the wake time: it stays in its
+// group, dimmed, and Flatten sinks it below that group's live sessions. A
+// session still sitting in the legacy Snoozed group is sent home first.
 func (h *Home) snoozeSession(inst *session.Instance, until time.Time) {
-	if inst.Flag != session.FlagSnoozed || inst.SnoozeFromGroup == "" {
-		inst.SnoozeFromGroup = inst.GroupPath
-	}
+	h.returnFromSnooze(inst)
 	inst.Snooze(until)
-	if inst.GroupPath != session.SnoozedGroupPath {
-		h.groupTree.MoveSessionToGroup(inst, session.SnoozedGroupPath)
-	}
 	h.rebuildFlatItems()
 	h.forceSaveInstances()
 }
 
-// returnFromSnooze sends a woken or cancelled session back to the group it
-// was snoozed from, if it is still sitting in Snoozed (a manual move out of
-// Snoozed is respected), and removes the Snoozed group once it is empty. The
-// caller rebuilds the flat list and saves.
+// migrateLegacySnoozed sends every session left in the old global Snoozed
+// group (v1.0.21–1.0.22) back to its home group, still snoozed, and drops the
+// group. Returns true if anything moved.
+func (h *Home) migrateLegacySnoozed() bool {
+	g, ok := h.groupTree.Groups[session.SnoozedGroupPath]
+	if !ok {
+		return false
+	}
+	moved := append([]*session.Instance(nil), g.Sessions...)
+	for _, inst := range moved {
+		h.returnFromSnooze(inst)
+	}
+	if _, still := h.groupTree.Groups[session.SnoozedGroupPath]; still && len(h.groupTree.Groups[session.SnoozedGroupPath].Sessions) == 0 {
+		h.groupTree.DeleteGroup(session.SnoozedGroupPath)
+	}
+	return len(moved) > 0 || ok
+}
+
+// returnFromSnooze is the legacy cleanup: a session still in the old global
+// Snoozed group goes back to the group it was snoozed from (a manual move out
+// is respected), and the Snoozed group is removed once empty. A no-op for
+// sessions snoozed in place. The caller rebuilds the flat list and saves.
 func (h *Home) returnFromSnooze(inst *session.Instance) {
 	from := inst.SnoozeFromGroup
 	inst.SnoozeFromGroup = ""

@@ -55,54 +55,75 @@ func TestWakeDueSnoozes(t *testing.T) {
 	}
 }
 
-// Snoozing moves the session to a Snoozed group pinned at the bottom; waking
-// or cancelling returns it to the group it came from and removes the Snoozed
-// group once empty. A session moved out of Snoozed by hand stays put.
-func TestSnoozeGroupRoundTrip(t *testing.T) {
-	a, b := inst("a"), inst("b")
-	a.GroupPath, b.GroupPath = "Work", "Work"
-	h := &Home{instances: []*session.Instance{a, b}}
+// Snoozing is in place: the session keeps its group, sinks below the live
+// sessions in it (soonest wake first), and comes back to its manual spot on
+// wake. Sessions left in the legacy global Snoozed group go home on load.
+func TestSnoozeInPlace(t *testing.T) {
+	a, b, c := inst("a"), inst("b"), inst("c")
+	for i, s := range []*session.Instance{a, b, c} {
+		s.GroupPath, s.Order = "Legal", i
+	}
+	h := &Home{instances: []*session.Instance{a, b, c}}
 	h.groupTree = session.NewGroupTree(h.instances)
-	h.groupTree.CreateGroup("Zed") // sorts after "Work" by name; Snoozed must still be last
-
-	h.snoozeSession(a, time.Now().Add(time.Hour))
-	if a.GroupPath != session.SnoozedGroupPath || a.SnoozeFromGroup != "Work" {
-		t.Fatalf("after snooze: group=%q from=%q", a.GroupPath, a.SnoozeFromGroup)
-	}
-	last := h.groupTree.GroupList[len(h.groupTree.GroupList)-1]
-	if last.Path != session.SnoozedGroupPath {
-		t.Errorf("Snoozed group should sort last, got %q", last.Path)
-	}
-
-	// Re-snooze keeps the original home group.
-	h.snoozeSession(a, time.Now().Add(2*time.Hour))
-	if a.SnoozeFromGroup != "Work" {
-		t.Errorf("re-snooze lost the home group: %q", a.SnoozeFromGroup)
+	order := func() string {
+		out := ""
+		for _, it := range h.groupTree.Flatten() {
+			if it.Type == session.ItemTypeSession {
+				out += it.Session.ID
+			}
+		}
+		return out
 	}
 
-	// Wake: back to Work, Snoozed group gone.
-	a.SnoozeUntil = time.Now().Add(-time.Second)
-	woken := h.wakeDueSnoozes(time.Now())
-	for _, w := range woken {
+	h.snoozeSession(a, time.Now().Add(48*time.Hour))
+	h.snoozeSession(b, time.Now().Add(2*time.Hour))
+	if a.GroupPath != "Legal" || b.GroupPath != "Legal" {
+		t.Fatalf("snooze moved sessions: a=%q b=%q", a.GroupPath, b.GroupPath)
+	}
+	if _, ok := h.groupTree.Groups[session.SnoozedGroupPath]; ok {
+		t.Error("no Snoozed group should be created")
+	}
+	if got := order(); got != "cba" {
+		t.Errorf("order = %q, want c (live) then b, a (soonest wake first)", got)
+	}
+	// Sinking holds under a sort key too.
+	h.groupTree.SortKey = func(i *session.Instance) int64 { return map[string]int64{"a": 3, "b": 2, "c": 1}[i.ID] }
+	if got := order(); got != "cba" {
+		t.Errorf("sorted order = %q, want snoozed still last", got)
+	}
+	h.groupTree.SortKey = nil
+
+	// Wake: back to its manual place, unread.
+	b.SnoozeUntil = time.Now().Add(-time.Second)
+	for _, w := range h.wakeDueSnoozes(time.Now()) {
 		h.returnFromSnooze(w)
 	}
-	if a.GroupPath != "Work" || a.Flag != session.FlagUnread || a.SnoozeFromGroup != "" {
-		t.Errorf("after wake: group=%q flag=%v from=%q", a.GroupPath, a.Flag, a.SnoozeFromGroup)
+	if b.Flag != session.FlagUnread || b.GroupPath != "Legal" {
+		t.Errorf("after wake: flag=%v group=%q", b.Flag, b.GroupPath)
 	}
-	if _, ok := h.groupTree.Groups[session.SnoozedGroupPath]; ok {
-		t.Error("empty Snoozed group should be removed")
+	if got := order(); got != "bca" {
+		t.Errorf("after wake order = %q, want bca", got)
 	}
 
-	// Manual move out of Snoozed is respected on wake.
-	h.snoozeSession(b, time.Now().Add(time.Hour))
-	h.groupTree.MoveSessionToGroup(b, "Zed")
-	b.WakeFromSnooze()
-	h.returnFromSnooze(b)
-	if b.GroupPath != "Zed" {
-		t.Errorf("manual move should stick, got %q", b.GroupPath)
+	// Legacy: a session parked in the old global group goes home, still snoozed.
+	d := inst("d")
+	d.GroupPath = "Legal"
+	h.instances = append(h.instances, d)
+	h.groupTree.AddSession(d)
+	d.Snooze(time.Now().Add(time.Hour))
+	d.SnoozeFromGroup = "Legal"
+	h.groupTree.MoveSessionToGroup(d, session.SnoozedGroupPath)
+	if !h.migrateLegacySnoozed() {
+		t.Fatal("migration should report a change")
+	}
+	if d.GroupPath != "Legal" || d.Flag != session.FlagSnoozed || d.SnoozeFromGroup != "" {
+		t.Errorf("migrated: group=%q flag=%v from=%q", d.GroupPath, d.Flag, d.SnoozeFromGroup)
 	}
 	if _, ok := h.groupTree.Groups[session.SnoozedGroupPath]; ok {
-		t.Error("Snoozed group left behind after manual move")
+		t.Error("legacy Snoozed group should be gone")
+	}
+	if h.migrateLegacySnoozed() {
+		t.Error("second migration should be a no-op")
 	}
 }
 
