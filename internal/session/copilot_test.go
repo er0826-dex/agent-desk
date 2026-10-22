@@ -240,3 +240,63 @@ func TestCopilotPreparationIsStable(t *testing.T) {
 		t.Fatal("preparation changed an already assigned identity")
 	}
 }
+
+func TestCopilotLegacyToolClassificationMigration(t *testing.T) {
+	s := newTestStorage(t)
+	var entries []*Instance
+	for _, tool := range []string{"claude", "shell"} {
+		inst := NewInstanceWithTool("legacy-"+tool, "/shared/project", tool)
+		inst.Command = "copilot"
+		entries = append(entries, inst)
+	}
+	claude := NewInstanceWithTool("actual-claude", "/shared/project", "claude")
+	claude.Command = "claude"
+	entries = append(entries, claude)
+	if err := s.SaveWithGroups(entries, nil); err != nil {
+		t.Fatal(err)
+	}
+	lite, _, err := s.LoadLite()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range lite {
+		if entry.Command == "copilot" && entry.Tool != "copilot" {
+			t.Fatalf("CLI load retained stale tool label: %+v", entry)
+		}
+	}
+	loaded, _, err := s.LoadWithGroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inst := range loaded {
+		if inst.Command == "claude" {
+			if inst.Tool != "claude" {
+				t.Fatal("migration changed an actual Claude session")
+			}
+			continue
+		}
+		if inst.Tool != "copilot" || inst.CopilotSessionID != "" || inst.CopilotSessionPending {
+			t.Fatalf("legacy entry was not migrated without inventing a conversation: %+v", inst)
+		}
+		if !errors.Is(inst.Restart(), ErrCopilotRecoveryRequired) {
+			t.Fatal("mislabeled legacy session bypassed recovery")
+		}
+		// Simulate a wrapper/model mention during status polling after reload.
+		inst.GetTmuxSession().Command = "env MODEL=claude copilot"
+		if got := inst.GetTmuxSession().ForceDetectTool(); got != "copilot" {
+			t.Fatalf("status polling changed Copilot back to %q", got)
+		}
+	}
+	if err := s.SaveWithGroups(loaded, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.db.LoadInstances()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Command == "copilot" && row.Tool != "copilot" {
+			t.Fatal("corrected CLI identity was not persisted")
+		}
+	}
+}

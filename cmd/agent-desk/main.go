@@ -25,6 +25,7 @@ import (
 	"github.com/millwright-software/agent-desk/internal/logging"
 	"github.com/millwright-software/agent-desk/internal/session"
 	"github.com/millwright-software/agent-desk/internal/statedb"
+	"github.com/millwright-software/agent-desk/internal/tmux"
 	"github.com/millwright-software/agent-desk/internal/ui"
 	"github.com/millwright-software/agent-desk/internal/update"
 )
@@ -1821,7 +1822,7 @@ func detectTool(cmd string) string {
 	}
 
 	cmd = strings.ToLower(cmd)
-	if fields := strings.Fields(cmd); len(fields) > 0 && filepath.Base(fields[0]) == "copilot" {
+	if tmux.IsCopilotCommand(cmd) {
 		return "copilot"
 	}
 	switch {

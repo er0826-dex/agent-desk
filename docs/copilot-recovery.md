@@ -10,6 +10,10 @@ conversation was used most recently.
 Select a Copilot entry and press **Shift+R**. Enter also starts recovery when its
 tmux session is gone.
 
+Older entries that launch `copilot` but were labeled `claude` or `shell` are
+recognized as Copilot when loaded. A Claude model selected inside Copilot does
+not make it a Claude Code session or change where its history belongs.
+
 If the entry has no stored Copilot conversation UUID, a recovery picker opens.
 It shows saved conversation names, UUIDs and update times. Type to filter, use
 Up/Down to navigate, and Tab to switch between the entry's folder and all folders.

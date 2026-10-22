@@ -1355,6 +1355,9 @@ func (i *Instance) loadCustomPatternsFromConfig() {
 	// Keep detect patterns for DetectTool() (separate from busy/prompt detection)
 	if toolDef := GetToolDef(i.Tool); toolDef != nil {
 		i.tmuxSession.SetDetectPatterns(i.Tool, toolDef.DetectPatterns)
+	} else if i.Tool == "copilot" {
+		// A model banner (e.g. Claude) must not change which CLI owns the history.
+		i.tmuxSession.SetDetectPatterns("copilot", nil)
 	}
 }
 
