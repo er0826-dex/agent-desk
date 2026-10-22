@@ -142,22 +142,23 @@ type Home struct {
 	flatItems    []session.Item // Flattened view for cursor navigation
 
 	// Components
-	search               *Search
-	globalSearch         *GlobalSearch              // Global session search across all Claude conversations
-	globalSearchIndex    *session.GlobalSearchIndex // Search index (nil if disabled)
-	newDialog            *NewDialog
-	groupDialog          *GroupDialog          // For creating/renaming groups
-	confirmDialog        *ConfirmDialog        // For confirming destructive actions
-	helpOverlay          *HelpOverlay          // For showing keyboard shortcuts
-	setupWizard          *SetupWizard          // For first-run setup
-	settingsPanel        *SettingsPanel        // For editing settings
-	analyticsPanel       *AnalyticsPanel       // For displaying session analytics
-	geminiModelDialog    *GeminiModelDialog    // For selecting Gemini model
-	colorSchemeDialog    *ColorSchemeDialog    // For picking a per-session color scheme
-	snoozeDialog         *SnoozeDialog         // For parking a session until a wake time (s key)
-	sessionPickerDialog  *SessionPickerDialog  // For sending output to another session
-	worktreeFinishDialog *WorktreeFinishDialog // For finishing worktree sessions (merge + cleanup)
-	worktreeManager      *WorktreeManager      // For listing worktrees and removing orphans
+	search                *Search
+	globalSearch          *GlobalSearch              // Global session search across all Claude conversations
+	globalSearchIndex     *session.GlobalSearchIndex // Search index (nil if disabled)
+	newDialog             *NewDialog
+	groupDialog           *GroupDialog         // For creating/renaming groups
+	confirmDialog         *ConfirmDialog       // For confirming destructive actions
+	helpOverlay           *HelpOverlay         // For showing keyboard shortcuts
+	setupWizard           *SetupWizard         // For first-run setup
+	settingsPanel         *SettingsPanel       // For editing settings
+	analyticsPanel        *AnalyticsPanel      // For displaying session analytics
+	geminiModelDialog     *GeminiModelDialog   // For selecting Gemini model
+	colorSchemeDialog     *ColorSchemeDialog   // For picking a per-session color scheme
+	snoozeDialog          *SnoozeDialog        // For parking a session until a wake time (s key)
+	sessionPickerDialog   *SessionPickerDialog // For sending output to another session
+	copilotRecoveryDialog *CopilotRecoveryDialog
+	worktreeFinishDialog  *WorktreeFinishDialog // For finishing worktree sessions (merge + cleanup)
+	worktreeManager       *WorktreeManager      // For listing worktrees and removing orphans
 
 	// Analytics cache (async fetching with TTL)
 	currentAnalytics       *session.SessionAnalytics                  // Current analytics for selected session (Claude)
@@ -2366,6 +2367,16 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case copilotRecoveryLoadedMsg:
+		delete(h.resumingSessions, msg.instanceID)
+		inst := h.getInstanceByID(msg.instanceID)
+		if inst == nil {
+			h.setError(fmt.Errorf("session no longer exists"))
+			return h, nil
+		}
+		h.copilotRecoveryDialog = NewCopilotRecoveryDialog(inst, msg.conversations, msg.err)
+		return h, nil
+
 	case sessionCreatedMsg:
 		// Handle reload scenario: session was already started in tmux, we MUST save it to JSON
 		// even during reload, otherwise the session becomes orphaned (exists in tmux but not in storage)
@@ -2376,9 +2387,7 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// CRITICAL: Save the new session to JSON immediately to prevent orphaning
 			// Skip in-memory state update (reload will handle that), but persist to disk
 			uiLog.Debug("reload_save_session_created", slog.String("id", msg.instance.ID), slog.String("title", msg.instance.Title))
-			h.instancesMu.Lock()
-			h.instances = append(h.instances, msg.instance)
-			h.instancesMu.Unlock()
+			h.registerCreatedInstance(msg.instance)
 			// Force save to persist the session even during reload
 			h.forceSaveInstances()
 			// Trigger another reload to pick up the new session in the UI
@@ -2390,9 +2399,11 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			h.setError(msg.err)
 		} else {
+			if previous := h.getInstanceByID(msg.instance.ID); previous != nil {
+				h.groupTree.RemoveSession(previous)
+			}
+			h.registerCreatedInstance(msg.instance)
 			h.instancesMu.Lock()
-			h.instances = append(h.instances, msg.instance)
-			h.instanceByID[msg.instance.ID] = msg.instance
 			// Run dedup to ensure the new session doesn't have a duplicate ID
 			session.UpdateClaudeSessionsWithDedup(h.instances)
 			h.instancesMu.Unlock()
@@ -2595,6 +2606,17 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				inst.CaptureLoadedMCPs()
 			}
 			h.invalidatePreviewCache(msg.sessionID)
+			if msg.persisted {
+				state := h.preserveState()
+				return h, func() tea.Msg {
+					mtime, _ := h.storage.GetFileMtime()
+					instances, groups, err := h.storage.LoadWithGroups()
+					return loadSessionsMsg{
+						instances: instances, groups: groups, err: err,
+						restoreState: &state, loadMtime: mtime,
+					}
+				}
+			}
 			// Save the updated session state (new tmux session name)
 			h.saveInstances()
 		}
@@ -3243,6 +3265,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Track user activity for adaptive status updates
 		h.lastUserInputTime = time.Now()
+		if h.copilotRecoveryDialog != nil {
+			return h.handleCopilotRecoveryKey(msg)
+		}
 
 		// Handle setup wizard first (modal, blocks everything)
 		if h.setupWizard.IsVisible() {
@@ -3771,6 +3796,10 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if item.Session.Exists() {
 					h.isAttaching.Store(true) // Prevent View() output during transition (atomic)
 					return h, h.attachSession(item.Session)
+				}
+				if item.Session.Tool == "copilot" {
+					h.resumingSessions[item.Session.ID] = time.Now()
+					return h, h.restartSession(item.Session)
 				}
 				// tmux session is gone (e.g. server killed) — tell the user
 				// how to get it back instead of silently ignoring Enter
@@ -5085,6 +5114,11 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(name, path, command, g
 			tool = "codex"
 		case "opencode":
 			tool = "opencode"
+		case "copilot":
+			tool = "copilot"
+			if toolDef := session.GetToolDef(command); toolDef != nil {
+				command = toolDef.Command
+			}
 		default:
 			// Check custom tools: tool identity stays as the custom name (e.g. "glm")
 			// so config lookup works, but command resolves to the actual binary (e.g. "claude")
@@ -5117,6 +5151,19 @@ func (h *Home) createSessionInGroupWithWorktreeAndOptions(name, path, command, g
 		// Apply generic tool options (claude, codex, etc.)
 		if len(toolOptionsJSON) > 0 {
 			inst.ToolOptionsJSON = toolOptionsJSON
+		}
+
+		if tool == "copilot" {
+			if err := inst.PrepareCopilotSession(); err != nil {
+				return sessionCreatedMsg{err: err}
+			}
+			// Persist identity before the CLI starts, not in a delayed detector.
+			if h.storage == nil {
+				return sessionCreatedMsg{err: fmt.Errorf("cannot save Copilot identity: storage unavailable")}
+			}
+			if err := h.storage.SaveWithGroups([]*session.Instance{inst}, nil); err != nil {
+				return sessionCreatedMsg{err: fmt.Errorf("save Copilot identity: %w", err)}
+			}
 		}
 
 		if err := inst.Start(); err != nil {
@@ -5228,6 +5275,20 @@ func (h *Home) quickCreateSession() tea.Cmd {
 	)
 }
 
+// A pre-launch save may already have been loaded by the storage watcher.
+func (h *Home) registerCreatedInstance(inst *session.Instance) {
+	h.instancesMu.Lock()
+	defer h.instancesMu.Unlock()
+	h.instanceByID[inst.ID] = inst
+	for index, existing := range h.instances {
+		if existing.ID == inst.ID {
+			h.instances[index] = inst
+			return
+		}
+	}
+	h.instances = append(h.instances, inst)
+}
+
 // mostRecentPathInGroup returns the project path of the most recently created
 // session in the given group, or empty string if no sessions exist.
 func (h *Home) mostRecentPathInGroup(groupPath string) string {
@@ -5280,6 +5341,7 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 type sessionRestartedMsg struct {
 	sessionID string
 	err       error
+	persisted bool
 }
 
 // mcpRestartedMsg signals that an MCP-triggered restart completed and should auto-attach
@@ -5306,8 +5368,23 @@ func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
 			return sessionRestartedMsg{sessionID: id, err: err}
 		}
 
+		if current.Tool == "copilot" && current.CopilotSessionID == "" {
+			conversations, err := session.ListCopilotConversations()
+			return copilotRecoveryLoadedMsg{instanceID: id, conversations: conversations, err: err}
+		}
+		if current.Tool == "copilot" && h.storage == nil {
+			return sessionRestartedMsg{sessionID: id, err: fmt.Errorf("cannot restart Copilot: storage unavailable")}
+		}
 		err := current.Restart()
 		mcpUILog.Debug("restart_session_result", slog.String("id", id), slog.Any("error", err))
+		if err == nil && current.Tool == "copilot" {
+			// Persist the new tmux name even if a watcher replaced this pointer.
+			// The completion handler reloads instead of saving a stale UI copy.
+			if err := h.storage.SaveWithGroups([]*session.Instance{current}, nil); err != nil {
+				return sessionRestartedMsg{sessionID: id, err: fmt.Errorf("session restarted but its Copilot state could not be saved: %w", err)}
+			}
+			return sessionRestartedMsg{sessionID: id, persisted: true}
+		}
 		return sessionRestartedMsg{sessionID: id, err: err}
 	}
 }
@@ -5866,6 +5943,9 @@ func (h *Home) View() string {
 	}
 	if h.colorSchemeDialog.IsVisible() {
 		return h.colorSchemeDialog.View()
+	}
+	if h.copilotRecoveryDialog != nil {
+		return h.copilotRecoveryDialog.View(h.width, h.height)
 	}
 	if h.sessionPickerDialog.IsVisible() {
 		return h.sessionPickerDialog.View()

@@ -82,6 +82,9 @@ type Instance struct {
 	CodexDetectedAt time.Time `json:"codex_detected_at,omitempty"`
 	CodexStartedAt  int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
 
+	CopilotSessionID      string `json:"copilot_session_id,omitempty"`
+	CopilotSessionPending bool   `json:"copilot_session_pending,omitempty"`
+
 	// ColorScheme is the per-session visual theme (preset name from ColorSchemes).
 	// Empty = Default. Applied to the tmux window and the preview pane.
 	ColorScheme string `json:"color_scheme,omitempty"`
@@ -868,14 +871,18 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 }
 
 // buildCopilotCommand builds the launch command for GitHub Copilot CLI.
-// Copilot tracks sessions per directory, so resume needs no captured ID:
-// `copilot --continue` picks up the most recent session in the working dir.
 func (i *Instance) buildCopilotCommand(baseCommand string) string {
 	if i.Tool != "copilot" {
 		return baseCommand
 	}
-	// Bare "copilot" (or empty): start fresh.
+	// Bare "copilot" (or empty): launch the entry's own conversation.
 	if baseCommand == "" || baseCommand == "copilot" {
+		if i.CopilotSessionID != "" {
+			if i.CopilotSessionPending {
+				return "copilot --session-id=" + i.CopilotSessionID
+			}
+			return "copilot --resume=" + i.CopilotSessionID
+		}
 		return "copilot"
 	}
 	// Custom command (e.g. an explicit resume/flags command): return as-is.
@@ -1356,6 +1363,9 @@ func (i *Instance) Start() error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
+	if err := i.validateCopilotLaunch(); err != nil {
+		return err
+	}
 
 	// Build command based on tool type
 	// Priority: built-in tools (claude, gemini, opencode, codex) → custom tools from config.toml → raw command
@@ -1402,6 +1412,7 @@ func (i *Instance) Start() error {
 	if err := i.tmuxSession.Start(command); err != nil {
 		return fmt.Errorf("failed to start tmux session: %w", err)
 	}
+	i.CopilotSessionPending = false
 
 	// Set AGENTDESK_INSTANCE_ID for Claude hooks to identify this session
 	// This enables real-time status updates via Stop/SessionStart hooks
@@ -1444,6 +1455,9 @@ func (i *Instance) StartWithMessage(message string) error {
 	if i.tmuxSession == nil {
 		return fmt.Errorf("tmux session not initialized")
 	}
+	if err := i.validateCopilotLaunch(); err != nil {
+		return err
+	}
 
 	// Start session normally (no embedded message logic)
 	// Priority: built-in tools (claude, gemini) → custom tools from config.toml → raw command
@@ -1482,6 +1496,7 @@ func (i *Instance) StartWithMessage(message string) error {
 	if err := i.tmuxSession.Start(command); err != nil {
 		return fmt.Errorf("failed to start tmux session: %w", err)
 	}
+	i.CopilotSessionPending = false
 
 	// Set AGENTDESK_INSTANCE_ID for Claude hooks to identify this session
 	// This enables real-time status updates via Stop/SessionStart hooks
@@ -2819,6 +2834,26 @@ func (i *Instance) Kill() error {
 // For Claude sessions with known ID: sends Ctrl+C twice and resume command to existing session
 // For dead sessions or unknown ID: recreates the tmux session
 func (i *Instance) Restart() error {
+	var copilotCommand string
+	if i.Tool == "copilot" {
+		var err error
+		copilotCommand, err = i.copilotResumeCommand()
+		if err != nil {
+			return err
+		}
+		if i.tmuxSession != nil && i.tmuxSession.Exists() {
+			command, err := i.applyWrapper(copilotCommand)
+			if err != nil {
+				return err
+			}
+			if err := i.tmuxSession.RespawnPane(command); err != nil {
+				return fmt.Errorf("failed to restart Copilot session: %w", err)
+			}
+			i.CopilotSessionPending = false
+			i.Status = StatusWaiting
+			return nil
+		}
+	}
 	mcpLog.Debug("restart_called", slog.String("tool", i.Tool), slog.String("claude_session_id", i.ClaudeSessionID), slog.Bool("tmux_session", i.tmuxSession != nil), slog.Bool("tmux_exists", i.tmuxSession != nil && i.tmuxSession.Exists()))
 
 	// Clear flag immediately to prevent it staying set if restart fails
@@ -3044,6 +3079,7 @@ func (i *Instance) Restart() error {
 	i.tmuxSession = tmux.NewSession(i.Title, i.ProjectPath)
 	i.tmuxSession.InstanceID = i.ID // Pass instance ID for activity hooks
 	i.tmuxSession.SetInjectStatusLine(GetTmuxSettings().GetInjectStatusLine())
+	applyColorSchemeToTmux(i.tmuxSession, i.ColorScheme)
 
 	var command string
 	if i.Tool == "claude" && i.ClaudeSessionID != "" {
@@ -3059,9 +3095,7 @@ func (i *Instance) Restart() error {
 		command = fmt.Sprintf("tmux set-environment CODEX_SESSION_ID %s; codex%s resume %s",
 			i.CodexSessionID, i.resolveCodexYoloFlag(), i.CodexSessionID)
 	} else if i.Tool == "copilot" {
-		// Copilot tracks sessions per directory; --continue resumes the most
-		// recent one in the working dir, so no captured session ID is needed.
-		command = "copilot --continue"
+		command = copilotCommand
 	} else {
 		// Route to appropriate command builder based on tool
 		switch i.Tool {
@@ -3077,8 +3111,6 @@ func (i *Instance) Restart() error {
 			command = i.buildCodexCommand(i.Command)
 			// Record start time for async session ID detection
 			i.CodexStartedAt = time.Now().UnixMilli()
-		case "copilot":
-			command = i.buildCopilotCommand(i.Command)
 		default:
 			// Check if this is a custom tool with session resume config
 			if toolDef := GetToolDef(i.Tool); toolDef != nil {
@@ -3108,6 +3140,7 @@ func (i *Instance) Restart() error {
 		i.Status = StatusError
 		return fmt.Errorf("failed to restart tmux session: %w", err)
 	}
+	i.CopilotSessionPending = false
 
 	mcpLog.Debug("restart_start_succeeded")
 
@@ -3217,6 +3250,9 @@ func (i *Instance) SetGeminiModel(model string) error {
 // For custom tools with session resume config: can restart if session ID available
 // For other sessions: only if dead/error state
 func (i *Instance) CanRestart() bool {
+	if i.Tool == "copilot" {
+		return true // Unknown identities are recovered through the conversation picker.
+	}
 	// Gemini sessions with known session ID can always be restarted
 	if i.Tool == "gemini" && i.GeminiSessionID != "" {
 		return true

@@ -98,6 +98,7 @@ func printSessionHelp() {
 	fmt.Println("  wrapper            Wrapper command (use {command} to include tool command)")
 	fmt.Println("  claude-session-id  Claude conversation ID (for resume)")
 	fmt.Println("  gemini-session-id  Gemini conversation ID (for resume)")
+	fmt.Println("  copilot-session-id Copilot conversation UUID (for recovery)")
 	fmt.Println()
 	fmt.Println("Set examples:")
 	fmt.Println("  agent-desk session set my-project title \"New Title\"")
@@ -198,6 +199,9 @@ func handleSessionStart(profile string, args []string) {
 	}
 	if inst.ClaudeSessionID != "" {
 		jsonData["claude_session_id"] = inst.ClaudeSessionID
+	}
+	if inst.CopilotSessionID != "" {
+		jsonData["copilot_session_id"] = inst.CopilotSessionID
 	}
 	if initialMessage != "" {
 		jsonData["message"] = initialMessage
@@ -486,6 +490,10 @@ func handleSessionShow(profile string, args []string) {
 	if inst.Command != "" {
 		jsonData["command"] = inst.Command
 	}
+	if inst.Tool == "copilot" {
+		jsonData["copilot_session_id"] = inst.CopilotSessionID
+		jsonData["needs_recovery"] = inst.CopilotSessionID == ""
+	}
 
 	if inst.Tool == "claude" {
 		jsonData["claude_session_id"] = inst.ClaudeSessionID
@@ -521,6 +529,13 @@ func handleSessionShow(profile string, args []string) {
 	}
 
 	sb.WriteString(fmt.Sprintf("Tool:    %s\n", inst.Tool))
+	if inst.Tool == "copilot" {
+		if inst.CopilotSessionID == "" {
+			sb.WriteString("Copilot: not linked (press R to recover)\n")
+		} else {
+			fmt.Fprintf(&sb, "Copilot: %s\n", inst.CopilotSessionID)
+		}
+	}
 
 	if inst.Command != "" {
 		sb.WriteString(fmt.Sprintf("Command: %s\n", inst.Command))
@@ -588,6 +603,7 @@ func handleSessionSet(profile string, args []string) {
 		fmt.Println("  wrapper            Wrapper command (use {command} to include tool command)")
 		fmt.Println("  claude-session-id  Claude conversation ID")
 		fmt.Println("  gemini-session-id  Gemini conversation ID")
+		fmt.Println("  copilot-session-id Copilot conversation UUID (for recovery)")
 		fmt.Println()
 		fmt.Println("Options:")
 		fs.PrintDefaults()
@@ -616,19 +632,20 @@ func handleSessionSet(profile string, args []string) {
 
 	// Validate field name
 	validFields := map[string]bool{
-		"title":             true,
-		"path":              true,
-		"command":           true,
-		"tool":              true,
-		"wrapper":           true,
-		"claude-session-id": true,
-		"gemini-session-id": true,
+		"title":              true,
+		"path":               true,
+		"command":            true,
+		"tool":               true,
+		"wrapper":            true,
+		"claude-session-id":  true,
+		"gemini-session-id":  true,
+		"copilot-session-id": true,
 	}
 
 	if !validFields[field] {
 		out.Error(
 			fmt.Sprintf(
-				"invalid field: %s\nValid fields: title, path, command, tool, wrapper, claude-session-id, gemini-session-id",
+				"invalid field: %s\nValid fields: title, path, command, tool, wrapper, claude-session-id, gemini-session-id, copilot-session-id",
 				field,
 			),
 			ErrCodeInvalidOperation,
@@ -675,6 +692,12 @@ func handleSessionSet(profile string, args []string) {
 	case "wrapper":
 		oldValue = inst.Wrapper
 		inst.Wrapper = value
+	case "copilot-session-id":
+		oldValue = inst.CopilotSessionID
+		if err := inst.BindCopilotConversation(value); err != nil {
+			out.Error(err.Error(), ErrCodeInvalidOperation)
+			os.Exit(1)
+		}
 	case "claude-session-id":
 		oldValue = inst.ClaudeSessionID
 		inst.ClaudeSessionID = value

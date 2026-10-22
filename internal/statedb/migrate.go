@@ -45,8 +45,10 @@ type jsonInstanceData struct {
 	OpenCodeSessionID  string    `json:"opencode_session_id,omitempty"`
 	OpenCodeDetectedAt time.Time `json:"opencode_detected_at,omitempty"`
 
-	CodexSessionID  string    `json:"codex_session_id,omitempty"`
-	CodexDetectedAt time.Time `json:"codex_detected_at,omitempty"`
+	CodexSessionID        string    `json:"codex_session_id,omitempty"`
+	CodexDetectedAt       time.Time `json:"codex_detected_at,omitempty"`
+	CopilotSessionID      string    `json:"copilot_session_id,omitempty"`
+	CopilotSessionPending bool      `json:"copilot_session_pending,omitempty"`
 
 	ToolOptionsJSON json.RawMessage `json:"tool_options,omitempty"`
 	LoadedMCPNames  []string        `json:"loaded_mcp_names,omitempty"`
@@ -63,24 +65,26 @@ type jsonGroupData struct {
 
 // toolDataBlob is the JSON structure stored in the tool_data column.
 type toolDataBlob struct {
-	ClaudeSessionID    string          `json:"claude_session_id,omitempty"`
-	ClaudeDetectedAt   int64           `json:"claude_detected_at,omitempty"`
-	ClaudeModel        string          `json:"claude_model,omitempty"`
-	GeminiSessionID    string          `json:"gemini_session_id,omitempty"`
-	GeminiDetectedAt   int64           `json:"gemini_detected_at,omitempty"`
-	GeminiYoloMode     *bool           `json:"gemini_yolo_mode,omitempty"`
-	GeminiModel        string          `json:"gemini_model,omitempty"`
-	OpenCodeSessionID  string          `json:"opencode_session_id,omitempty"`
-	OpenCodeDetectedAt int64           `json:"opencode_detected_at,omitempty"`
-	CodexSessionID     string          `json:"codex_session_id,omitempty"`
-	CodexDetectedAt    int64           `json:"codex_detected_at,omitempty"`
-	LoadedMCPNames     []string        `json:"loaded_mcp_names,omitempty"`
-	ToolOptions        json.RawMessage `json:"tool_options,omitempty"`
-	ColorScheme        string          `json:"color_scheme,omitempty"`
-	Flag               int             `json:"flag,omitempty"`
-	LastLogActivity    int64           `json:"last_log_activity,omitempty"`
-	SnoozeUntil        int64           `json:"snooze_until,omitempty"`
-	SnoozeFromGroup    string          `json:"snooze_from_group,omitempty"`
+	ClaudeSessionID       string          `json:"claude_session_id,omitempty"`
+	ClaudeDetectedAt      int64           `json:"claude_detected_at,omitempty"`
+	ClaudeModel           string          `json:"claude_model,omitempty"`
+	GeminiSessionID       string          `json:"gemini_session_id,omitempty"`
+	GeminiDetectedAt      int64           `json:"gemini_detected_at,omitempty"`
+	GeminiYoloMode        *bool           `json:"gemini_yolo_mode,omitempty"`
+	GeminiModel           string          `json:"gemini_model,omitempty"`
+	OpenCodeSessionID     string          `json:"opencode_session_id,omitempty"`
+	OpenCodeDetectedAt    int64           `json:"opencode_detected_at,omitempty"`
+	CodexSessionID        string          `json:"codex_session_id,omitempty"`
+	CodexDetectedAt       int64           `json:"codex_detected_at,omitempty"`
+	CopilotSessionID      string          `json:"copilot_session_id,omitempty"`
+	CopilotSessionPending bool            `json:"copilot_session_pending,omitempty"`
+	LoadedMCPNames        []string        `json:"loaded_mcp_names,omitempty"`
+	ToolOptions           json.RawMessage `json:"tool_options,omitempty"`
+	ColorScheme           string          `json:"color_scheme,omitempty"`
+	Flag                  int             `json:"flag,omitempty"`
+	LastLogActivity       int64           `json:"last_log_activity,omitempty"`
+	SnoozeUntil           int64           `json:"snooze_until,omitempty"`
+	SnoozeFromGroup       string          `json:"snooze_from_group,omitempty"`
 	// Parked is a legacy bool (superseded by Flag); still read for migration.
 	Parked bool `json:"parked,omitempty"`
 }
@@ -102,14 +106,16 @@ func MigrateFromJSON(jsonPath string, db *StateDB) (int, int, error) {
 	rows := make([]*InstanceRow, 0, len(storage.Instances))
 	for _, inst := range storage.Instances {
 		td := toolDataBlob{
-			ClaudeSessionID:   inst.ClaudeSessionID,
-			GeminiSessionID:   inst.GeminiSessionID,
-			GeminiYoloMode:    inst.GeminiYoloMode,
-			GeminiModel:       inst.GeminiModel,
-			OpenCodeSessionID: inst.OpenCodeSessionID,
-			CodexSessionID:    inst.CodexSessionID,
-			LoadedMCPNames:    inst.LoadedMCPNames,
-			ToolOptions:       inst.ToolOptionsJSON,
+			ClaudeSessionID:       inst.ClaudeSessionID,
+			GeminiSessionID:       inst.GeminiSessionID,
+			GeminiYoloMode:        inst.GeminiYoloMode,
+			GeminiModel:           inst.GeminiModel,
+			OpenCodeSessionID:     inst.OpenCodeSessionID,
+			CodexSessionID:        inst.CodexSessionID,
+			CopilotSessionID:      inst.CopilotSessionID,
+			CopilotSessionPending: inst.CopilotSessionPending,
+			LoadedMCPNames:        inst.LoadedMCPNames,
+			ToolOptions:           inst.ToolOptionsJSON,
 		}
 		if !inst.ClaudeDetectedAt.IsZero() {
 			td.ClaudeDetectedAt = inst.ClaudeDetectedAt.Unix()
@@ -186,22 +192,26 @@ func MarshalToolData(
 	loadedMCPNames []string,
 	toolOptionsJSON json.RawMessage, colorScheme string, flag int, lastLogActivity int64,
 	snoozeUntil int64, snoozeFromGroup string,
+	copilotSessionID string,
+	copilotSessionPending bool,
 ) json.RawMessage {
 	td := toolDataBlob{
-		ClaudeSessionID:   claudeSessionID,
-		ClaudeModel:       claudeModel,
-		GeminiSessionID:   geminiSessionID,
-		GeminiYoloMode:    geminiYoloMode,
-		GeminiModel:       geminiModel,
-		OpenCodeSessionID: openCodeSessionID,
-		CodexSessionID:    codexSessionID,
-		LoadedMCPNames:    loadedMCPNames,
-		ToolOptions:       toolOptionsJSON,
-		ColorScheme:       colorScheme,
-		Flag:              flag,
-		LastLogActivity:   lastLogActivity,
-		SnoozeUntil:       snoozeUntil,
-		SnoozeFromGroup:   snoozeFromGroup,
+		ClaudeSessionID:       claudeSessionID,
+		ClaudeModel:           claudeModel,
+		GeminiSessionID:       geminiSessionID,
+		GeminiYoloMode:        geminiYoloMode,
+		GeminiModel:           geminiModel,
+		OpenCodeSessionID:     openCodeSessionID,
+		CodexSessionID:        codexSessionID,
+		CopilotSessionID:      copilotSessionID,
+		CopilotSessionPending: copilotSessionPending,
+		LoadedMCPNames:        loadedMCPNames,
+		ToolOptions:           toolOptionsJSON,
+		ColorScheme:           colorScheme,
+		Flag:                  flag,
+		LastLogActivity:       lastLogActivity,
+		SnoozeUntil:           snoozeUntil,
+		SnoozeFromGroup:       snoozeFromGroup,
 	}
 	if !claudeDetectedAt.IsZero() {
 		td.ClaudeDetectedAt = claudeDetectedAt.Unix()
@@ -230,6 +240,8 @@ func UnmarshalToolData(data json.RawMessage) (
 	loadedMCPNames []string,
 	toolOptionsJSON json.RawMessage, colorScheme string, flag int, lastLogActivity int64,
 	snoozeUntil int64, snoozeFromGroup string,
+	copilotSessionID string,
+	copilotSessionPending bool,
 ) {
 	if len(data) == 0 {
 		return
@@ -254,6 +266,8 @@ func UnmarshalToolData(data json.RawMessage) (
 		openCodeDetectedAt = time.Unix(td.OpenCodeDetectedAt, 0)
 	}
 	codexSessionID = td.CodexSessionID
+	copilotSessionID = td.CopilotSessionID
+	copilotSessionPending = td.CopilotSessionPending
 	if td.CodexDetectedAt > 0 {
 		codexDetectedAt = time.Unix(td.CodexDetectedAt, 0)
 	}
