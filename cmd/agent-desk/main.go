@@ -860,6 +860,11 @@ func handleAdd(profile string, args []string) {
 		}
 	}
 
+	if err := newInstance.PrepareCopilotSession(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Add to instances
 	instances = append(instances, newInstance)
 
@@ -1816,6 +1821,9 @@ func detectTool(cmd string) string {
 	}
 
 	cmd = strings.ToLower(cmd)
+	if fields := strings.Fields(cmd); len(fields) > 0 && filepath.Base(fields[0]) == "copilot" {
+		return "copilot"
+	}
 	switch {
 	case strings.Contains(cmd, "claude"):
 		return "claude"
