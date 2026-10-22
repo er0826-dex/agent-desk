@@ -402,6 +402,15 @@ func unixToTime(sec int64) time.Time {
 	return time.Unix(sec, 0)
 }
 
+func storedToolForCommand(tool, command string) string {
+	// Older releases classified Copilot as shell, or inferred Claude from its
+	// selected model. The launch executable is authoritative for these entries.
+	if tmux.IsCopilotCommand(command) {
+		return "copilot"
+	}
+	return tool
+}
+
 // LoadLite reads session data from SQLite without tmux reconnection.
 // This is a fast path for operations that only need to read session metadata
 // (e.g., finding current session by tmux name) without initializing full Instance objects.
@@ -446,7 +455,7 @@ func (s *Storage) LoadLite() ([]*InstanceData, []*GroupData, error) {
 			ParentSessionID:       r.ParentSessionID,
 			Command:               r.Command,
 			Wrapper:               r.Wrapper,
-			Tool:                  r.Tool,
+			Tool:                  storedToolForCommand(r.Tool, r.Command),
 			Status:                Status(r.Status),
 			CreatedAt:             r.CreatedAt,
 			LastAccessedAt:        r.LastAccessed,
@@ -536,7 +545,7 @@ func (s *Storage) LoadWithGroups() ([]*Instance, []*GroupData, error) {
 			ParentSessionID:       r.ParentSessionID,
 			Command:               r.Command,
 			Wrapper:               r.Wrapper,
-			Tool:                  r.Tool,
+			Tool:                  storedToolForCommand(r.Tool, r.Command),
 			Status:                Status(r.Status),
 			CreatedAt:             r.CreatedAt,
 			LastAccessedAt:        r.LastAccessed,
@@ -708,7 +717,7 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 			ParentSessionID:       instData.ParentSessionID,
 			Command:               instData.Command,
 			Wrapper:               instData.Wrapper,
-			Tool:                  instData.Tool,
+			Tool:                  storedToolForCommand(instData.Tool, instData.Command),
 			Status:                instData.Status,
 			CreatedAt:             instData.CreatedAt,
 			LastAccessedAt:        instData.LastAccessedAt,
@@ -741,6 +750,9 @@ func (s *Storage) convertToInstances(data *StorageData) ([]*Instance, []*GroupDa
 		// Apply the persisted color scheme to the tmux session styling so a
 		// reloaded session keeps its colors when next started/attached.
 		applyColorSchemeToTmux(tmuxSess, instData.ColorScheme)
+		if inst.Tool == "copilot" {
+			inst.loadCustomPatternsFromConfig()
+		}
 
 		// PERFORMANCE: Skip UpdateStatus at load time - use cached status from SQLite
 		// The background worker will update status on first tick.

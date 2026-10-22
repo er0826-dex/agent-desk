@@ -659,6 +659,10 @@ func (s *Session) SetPatterns(p *ResolvedPatterns) {
 func (s *Session) SetDetectPatterns(toolName string, detectPatterns []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.customToolName != toolName {
+		s.detectedTool = ""
+		s.toolDetectedAt = time.Time{}
+	}
 	s.customToolName = toolName
 	s.customDetectPatterns = detectPatterns
 }
@@ -1597,8 +1601,14 @@ func (s *Session) HasUpdated() (bool, error) {
 	return false, nil
 }
 
-// DetectTool detects which AI coding tool is running in the session
-// Uses caching to avoid re-detection on every call
+// IsCopilotCommand identifies the executable, not a model name or conversation text.
+func IsCopilotCommand(command string) bool {
+	fields := strings.Fields(command)
+	return len(fields) > 0 && filepath.Base(fields[0]) == "copilot"
+}
+
+// DetectTool detects which AI coding tool is running in the session.
+// Uses caching to avoid re-detection on every call.
 func (s *Session) DetectTool() string {
 	// Check cache first (read lock pattern for better concurrency)
 	s.mu.Lock()
@@ -1625,7 +1635,9 @@ func (s *Session) DetectTool() string {
 	if s.Command != "" {
 		cmdLower := strings.ToLower(s.Command)
 		var tool string
-		if strings.Contains(cmdLower, "claude") {
+		if IsCopilotCommand(s.Command) {
+			tool = "copilot"
+		} else if strings.Contains(cmdLower, "claude") {
 			tool = "claude"
 		} else if strings.Contains(cmdLower, "gemini") {
 			tool = "gemini"
